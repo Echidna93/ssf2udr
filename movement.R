@@ -125,8 +125,6 @@ matrix
 
 #' initiates a data frame of inds
 #' @param n.initial # inds
-#' @param dim dimension of a vector for random assignment of location
-#' @param nI # infected individuals to start
 #' @export
 make_inds <- function(n.initial,dim){
   id<-1:n.initial
