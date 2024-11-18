@@ -28,7 +28,7 @@ divide_by_max<-function(x, max){
 #' @export
 move<-function(data_frame, landscape, nrow, ncol, R, l, betas_l){
   nbrs<-get_neighbors(loc = c(data_frame[1,]$x,data_frame[1,]$y), nrow, ncol, landscape)
-  #print(nbrs)
+  ##printnbrs)
   # new_loc<-nbrs[[round(runif(1,1,length(nbrs)))]]
   new_loc<-make_decision(landscape=landscape, nbrs=nbrs, R, l, betas_l)
   #new_loc
@@ -47,7 +47,7 @@ make_decision<-function(landscape, nbrs, R, l, betas_l){
   # Random movement
   # indx <- round(runif(1, 1, length(nbrs)))
   # decision_vec<-c(nbrs[[indx]][1],nbrs[[indx]][2])
-  # print(nbrs)
+  # #printnbrs)
   probs <- mapply(function(x, y) exp(-y)*exp(-2*betas_l[as.character(landscape[x[1],][x[2]])][[1]]), nbrs, c(0, 1, 1, 1, 1))
   probs <- probs / sum(probs)
   # print(probs)
@@ -113,7 +113,7 @@ smooth_rast <- function(landscape, smoothingFactor, ncol, nrow){
       }
       nbr_vals_ <- lapply(l, function(x) landscape[x[1],][x[2]])
       if(any(is.na(nbr_vals_))){
-        print(l)
+        #printl)
       }
       matrix[i,j] <- round(mean(unlist(nbr_vals_)))
     }
@@ -172,7 +172,7 @@ get_neighbors<-function(loc, nrow, ncol, landscape){
       l[[i]][2] <- 1
     }
   }
-  print(l)
+  #printl)
   return(l)
   
 }
@@ -191,19 +191,33 @@ is_same_location<-function(ind1, ind2){
   (ind1$xloc == ind1$yloc) & (ind1$yloc == ind2$yloc)
 }
 
+runSim <- function(nrow, ncol, landscape_smooth, betas_l, out.dat,
+                     R,l, smoothingFactor){
+  intensity_mat <- matrix(0, nrow = nrow, ncol = ncol)
+  new_loc <- makeInds(1,indxList[k,]$x,indxList[k,]$y,nrow)
+  intensity_mat[new_loc$x, new_loc$y] <- intensity_mat[new_loc$x, new_loc$y] + 1
+  for(iter in 1:(nrow*ncol)){
+    new_loc <- move(new_loc, landscape_smooth, nrow, ncol, R, l, betas_l)
+    intensity_mat[new_loc$x, new_loc$y] <- intensity_mat[new_loc$x, new_loc$y] + 1    
+  }
+  return(c(smoothingFactor, mean(intensity_mat[which(landscape_smooth==1)]),
+           mean(intensity_mat[which(landscape_smooth==0)])))
+}
+
+
 #helper checks if two ids are the same
 is_not_same_id<-function(ind1, ind2){
   !(ind1$id == ind2$id)
 }
 # CONSTANTS
 # TODO look into making these changeable by a user in an x11() window?
-nrow <- 10
-ncol <- 10
+nrow <- 100
+ncol <- 100
 landscape <- make_landscape_matrix(nrow, ncol, TRUE)
-nsims <- 100
+nsims <- nrow*ncol
 R <- 1
 l <- 1
-smoothingFactor <- 1
+smoothingFactor <- 2
 out.dat <- data.frame(matrix(nrow = 0, ncol = 3))
 names(out.dat) <- c("smoothingFactor",
                     "meanIntsty1",
@@ -211,21 +225,8 @@ names(out.dat) <- c("smoothingFactor",
 indxList <- makeIndiceList(nrow, ncol)
 landscape_smooth <- smooth_rast(landscape, smoothingFactor, nrow, ncol)
 for(k in 1:nsims){
-  # locs <- start
-  intensity_mat <- matrix(0, nrow = nrow, ncol = ncol)
-  start_pos <- makeInds(1,indxList[k,]$x,indxList[k,]$y,nrow) 
-  smoothingFactor <- 2
-  new_loc <- start_pos
-  intensity_mat[new_loc$x, new_loc$y] <- intensity_mat[new_loc$x, new_loc$y] + 1
-  for(iter in 1:100){
-      new_loc <- move(new_loc, landscape_smooth, nrow, ncol, R, l, betas_l)
-      intensity_mat[new_loc$x, new_loc$y] <- intensity_mat[new_loc$x, new_loc$y] + 1    
-      # locs<-rbind(locs, new_loc)
-  }
-  print(k)
-  out.dat[k,]$smoothingFactor <- smoothingFactor
-  out.dat[k,]$meanIntsty1 <-  mean(intensity_mat[which(landscape_smooth==1)])
-  out.dat[k,]$meanIntsty0 <- mean(intensity_mat[which(landscape_smooth==0)])
+   benchmark(out.dat <- rbind(out.dat,runSim(nrow, ncol, landscape_smooth, betas_l, out.dat, R, l)),
+             replications = 10)
 }
 
 

@@ -645,6 +645,27 @@
       ],
       "Hash": "01f28d4278f15c76cddbea05899c5d6f"
     },
+    "plot.matrix": {
+      "Package": "plot.matrix",
+      "Version": "1.6.2",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Hash": "a0c0de3410d9956aafc07cdd5147057f"
+    },
+    "plotrix": {
+      "Package": "plotrix",
+      "Version": "3.8-4",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "grDevices",
+        "graphics",
+        "stats",
+        "utils"
+      ],
+      "Hash": "d47fdfc45aeba360ce9db50643de3fbd"
+    },
     "pracma": {
       "Package": "pracma",
       "Version": "2.4.4",
