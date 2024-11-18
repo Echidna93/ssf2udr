@@ -9,14 +9,13 @@ betas_l <- list('0' = 0,
 #' @param nrow number of rows in matrix
 #' @param ncol number of columns in matrix
 #' @export
-make_landscape_matrix <- function(numrow, numcol, R, binary=TRUE){
-    x = seq(1, numrow, by = 1)
-    y = seq(1, numcol, by = 1)
-    coords <- list(expand.grid(x,y))
-    vals <- sample(x = c(0,1),size = numrow*numcol, replace = TRUE)
-    vals = unlist(sapply(coords, function(x) round(cos((pi * x[1])/R) * cos((pi * x[2])/R))))
-    matrix(vals, ncol = numcol, nrow=numrow)
-
+make_landscape_matrix <- function(numrow, numcol, binary=TRUE){
+  x = seq(1, numrow, by = 1)
+  y = seq(1, numcol, by = 1)
+  coords <- list(expand.grid(x,y))
+  vals <- sample(x = c(0,1),size = numrow*numcol, replace = TRUE)
+  matrix(vals, ncol = numcol, nrow=numrow)
+  
 }
 
 # helper function
@@ -28,15 +27,14 @@ divide_by_max<-function(x, max){
 #' @param data_frame holds data about inds
 #' @export
 move<-function(data_frame, landscape, nrow, ncol, R, l, betas_l){
-    nbrs<-get_neighbors(loc = c(data_frame[1,]$x,data_frame[1,]$y), nrow, ncol, landscape)
-    #print(nbrs)
-    # new_loc<-nbrs[[round(runif(1,1,length(nbrs)))]]
-    new_loc<-make_decision(landscape=landscape, nbrs=nbrs, R, l, betas_l)
-    #new_loc
-    data_frame[1,]$x<-new_loc[[1]]
-    data_frame[1,]$y<-new_loc[[2]]
-    data_frame[1,]$t <- data_frame[1,]$t + 1
-    data_frame
+  nbrs<-get_neighbors(loc = c(data_frame[1,]$x,data_frame[1,]$y), nrow, ncol, landscape)
+  #print(nbrs)
+  # new_loc<-nbrs[[round(runif(1,1,length(nbrs)))]]
+  new_loc<-make_decision(landscape=landscape, nbrs=nbrs, R, l, betas_l)
+  #new_loc
+  data_frame[1,]$x<-new_loc[[1]]
+  data_frame[1,]$y<-new_loc[[2]]
+  data_frame
 }
 
 #' Chooses best possible landscape component to move to
@@ -118,20 +116,20 @@ smooth_rast <- function(landscape, smoothingFactor, ncol, nrow){
         print(l)
       }
       matrix[i,j] <- round(mean(unlist(nbr_vals_)))
-      }
-   }
-matrix
+    }
+  }
+  matrix
+}
+
+makeIndiceList <- function(nrow, ncol){
+  as.data.frame(expand.grid(seq(1:nrow), seq(1:ncol))) %>% rename(x = Var1, y = Var2)
 }
 
 #' initiates a data frame of inds
 #' @param n.initial # inds
 #' @export
-make_inds <- function(n.initial,dim){
-  id<-1:n.initial
-  x<-round(runif(1, min=0, max=dim))
-  y<-round(runif(1, min=0, max=dim))
-  inds <- data.frame(id = id, x=x, y=y,t=1, stringsAsFactors=FALSE) 
-  inds
+makeInds <- function(nInds, xInit, yInit, dim){
+  return(data.frame(id = 1, x=xInit, y=yInit))
 }
 
 #' Helper function
@@ -148,35 +146,35 @@ get_neighbors<-function(loc, nrow, ncol, landscape){
           c(0,0))
   # check if either x,y element of loc is greater than
   # the dimension of the landscape matrix
-      # case 1 on left edge
-      steps <- list(c(x = 0, y = 0),
-                    c(x = 1, y = 0),
-                    c(x = 0, y = 1),
-                    c(x = 0, y = -1),
-                    c(x = -1, y = 0))
-      for(i in 1:length(steps)){
-        if(!((loc[1] + steps[[i]][1]) > ncol) & !((loc[1] + steps[[i]][1]) < 1)){ # right edge
-          l[[i]][1] <- loc[1] + steps[[i]][1]
-        }
-        if(!((loc[2] + steps[[i]][2]) < 1) & !((loc[2] + steps[[i]][2]) > nrow)){
-          l[[i]][2] <-  loc[2] + steps[[i]][2]
-        }
-        if((loc[1] + steps[[i]][1]) < 1){
-          l[[i]][1] <- ncol
-        }
-        if((loc[1] + steps[[i]][1]) > ncol){ # right edge
-          l[[i]][1] <- 1
-        }
-        if((loc[2] + steps[[i]][2]) < 1){
-          l[[i]][2] <-  nrow
-        }
-        if((loc[2] + steps[[i]][2]) > nrow){
-          l[[i]][2] <- 1
-        }
-      }
-      print(l)
-      return(l)
-      
+  # case 1 on left edge
+  steps <- list(c(x = 0, y = 0),
+                c(x = 1, y = 0),
+                c(x = 0, y = 1),
+                c(x = 0, y = -1),
+                c(x = -1, y = 0))
+  for(i in 1:length(steps)){
+    if(!((loc[1] + steps[[i]][1]) > ncol) & !((loc[1] + steps[[i]][1]) < 1)){ # right edge
+      l[[i]][1] <- loc[1] + steps[[i]][1]
+    }
+    if(!((loc[2] + steps[[i]][2]) < 1) & !((loc[2] + steps[[i]][2]) > nrow)){
+      l[[i]][2] <-  loc[2] + steps[[i]][2]
+    }
+    if((loc[1] + steps[[i]][1]) < 1){
+      l[[i]][1] <- ncol
+    }
+    if((loc[1] + steps[[i]][1]) > ncol){ # right edge
+      l[[i]][1] <- 1
+    }
+    if((loc[2] + steps[[i]][2]) < 1){
+      l[[i]][2] <-  nrow
+    }
+    if((loc[2] + steps[[i]][2]) > nrow){
+      l[[i]][2] <- 1
+    }
+  }
+  print(l)
+  return(l)
+  
 }
 # Main simulation
 # TODO make main simulation loop, using functional? (lapply)
@@ -197,37 +195,41 @@ is_same_location<-function(ind1, ind2){
 is_not_same_id<-function(ind1, ind2){
   !(ind1$id == ind2$id)
 }
-
 # CONSTANTS
 # TODO look into making these changeable by a user in an x11() window?
-numrow=100
-numcol=100
-R <- exp(1*1 + 0 * 0)
-landscape<-make_landscape_matrix(numrow, numcol, R, TRUE)
-landscape_smooth <- smooth_rast(landscape, 2, 100, 100)
-landscape_smooth3 <- smooth_rast(landscape, 3, 100, 100)
+nrow <- 10
+ncol <- 10
+landscape <- make_landscape_matrix(nrow, ncol, TRUE)
 nsims <- 100
+R <- 1
+l <- 1
+smoothingFactor <- 1
+out.dat <- data.frame(matrix(nrow = 0, ncol = 3))
+names(out.dat) <- c("smoothingFactor",
+                    "meanIntsty1",
+                    "meanIntsty0")
+indxList <- makeIndiceList(nrow, ncol)
+landscape_smooth <- smooth_rast(landscape, smoothingFactor, nrow, ncol)
 for(k in 1:nsims){
-  l = 1
-  start<-make_inds(1,numrow)
-  locs_smooth <- start
-  nsims <- 100
-  for(iter in 1:1000){
-    if(iter == 1){
-      new_loc<-move(start, landscape_smooth, numrow, numcol, R, l, betas_l)  
-    }else{
-      old_loc <- new_loc
-      new_loc <- move(old_loc, landscape_smooth, numrow, numcol,R, l, betas_l)
-    }
-    locs_smooth<-rbind(locs_smooth, new_loc)
+  # locs <- start
+  intensity_mat <- matrix(0, nrow = nrow, ncol = ncol)
+  start_pos <- makeInds(1,indxList[k,]$x,indxList[k,]$y,nrow) 
+  smoothingFactor <- 2
+  new_loc <- start_pos
+  intensity_mat[new_loc$x, new_loc$y] <- intensity_mat[new_loc$x, new_loc$y] + 1
+  for(iter in 1:100){
+      new_loc <- move(new_loc, landscape_smooth, nrow, ncol, R, l, betas_l)
+      intensity_mat[new_loc$x, new_loc$y] <- intensity_mat[new_loc$x, new_loc$y] + 1    
+      # locs<-rbind(locs, new_loc)
   }
-  ls_rast <- rast(landscape)
-  pts <- terra::extract(ls_rast, data.frame(x = locs$x, y = locs$y))
-  prop.1[k] <- length(which(pts ==1))/nrow(pts)
+  print(k)
+  out.dat[k,]$smoothingFactor <- smoothingFactor
+  out.dat[k,]$meanIntsty1 <-  mean(intensity_mat[which(landscape_smooth==1)])
+  out.dat[k,]$meanIntsty0 <- mean(intensity_mat[which(landscape_smooth==0)])
 }
 
 
 hist(pts$lyr.1)
 
-plot(rast(landscape))
-points(make_track(as_tibble(locs_smooth), .x = x, .y = y, .t = t), col = "white", pch=20)
+plot(rast(landscape_smooth))
+points(make_track(as_tibble(locs), .x = x, .y = y, .t = t), col = "white", pch=20)
