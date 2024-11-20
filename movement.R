@@ -27,14 +27,9 @@ divide_by_max<-function(x, max){
 #' @param data_frame holds data about inds
 #' @export
 move<-function(data_frame, landscape, nrow, ncol, R, l, betas_l){
-  nbrs<-get_neighbors(loc = c(data_frame[1,]$x,data_frame[1,]$y), nrow, ncol, landscape)
-  ##printnbrs)
-  # new_loc<-nbrs[[round(runif(1,1,length(nbrs)))]]
+  nbrs<-get_neighbors(loc = c(data_frame$x,data_frame$y), nrow, ncol, landscape)
   new_loc<-make_decision(landscape=landscape, nbrs=nbrs, R, l, betas_l)
-  #new_loc
-  data_frame[1,]$x<-new_loc[[1]]
-  data_frame[1,]$y<-new_loc[[2]]
-  data_frame
+  return(data.frame(x = new_loc[[1]], y = new_loc[[2]], t = data_frame[1,]$t + 1))
 }
 
 #' Chooses best possible landscape component to move to
@@ -48,7 +43,7 @@ make_decision<-function(landscape, nbrs, R, l, betas_l){
   # indx <- round(runif(1, 1, length(nbrs)))
   # decision_vec<-c(nbrs[[indx]][1],nbrs[[indx]][2])
   # #printnbrs)
-  probs <- mapply(function(x, y) exp(-y)*exp(-2*betas_l[as.character(landscape[x[1],][x[2]])][[1]]), nbrs, c(0, 1, 1, 1, 1))
+  probs <- mapply(function(x, y) exp(-y) * exp(betas_l[as.character(landscape[x[1],][x[2]])][[1]]), nbrs, c(0, 1, 1, 1, 1))
   probs <- probs / sum(probs)
   # print(probs)
   selection <- rmultinom(1, c(1:5), prob = probs)
@@ -129,7 +124,7 @@ makeIndiceList <- function(nrow, ncol){
 #' @param n.initial # inds
 #' @export
 makeInds <- function(nInds, xInit, yInit, dim){
-  return(data.frame(id = 1, x=xInit, y=yInit))
+  return(data.frame(x=xInit, y=yInit, t=1))
 }
 
 #' Helper function
@@ -193,15 +188,7 @@ is_same_location<-function(ind1, ind2){
 
 runSim <- function(nrow, ncol, landscape_smooth, betas_l, out.dat,
                      R,l, smoothingFactor){
-  intensity_mat <- matrix(0, nrow = nrow, ncol = ncol)
-  new_loc <- makeInds(1,indxList[k,]$x,indxList[k,]$y,nrow)
-  intensity_mat[new_loc$x, new_loc$y] <- intensity_mat[new_loc$x, new_loc$y] + 1
-  for(iter in 1:(nrow*ncol)){
-    new_loc <- move(new_loc, landscape_smooth, nrow, ncol, R, l, betas_l)
-    intensity_mat[new_loc$x, new_loc$y] <- intensity_mat[new_loc$x, new_loc$y] + 1    
-  }
-  return(c(smoothingFactor, mean(intensity_mat[which(landscape_smooth==1)]),
-           mean(intensity_mat[which(landscape_smooth==0)])))
+
 }
 
 
@@ -211,25 +198,46 @@ is_not_same_id<-function(ind1, ind2){
 }
 # CONSTANTS
 # TODO look into making these changeable by a user in an x11() window?
-nrow <- 100
-ncol <- 100
+# calling the random number generator beforehand
+# long format; sparse matrix
+# generate random numbers a priori
+# clear environment every few steps
+nrow <- 10
+ncol <- 10
 landscape <- make_landscape_matrix(nrow, ncol, TRUE)
 nsims <- nrow*ncol
 R <- 1
 l <- 1
-smoothingFactor <- 2
+smoothingFactorL <- c(1:7)
+nreps = 10
 out.dat <- data.frame(matrix(nrow = 0, ncol = 3))
 names(out.dat) <- c("smoothingFactor",
                     "meanIntsty1",
                     "meanIntsty0")
+locs <- data.frame(matrix(0, nrow = 0, ncol = 3))
+names(locs) <- c("x", "y", "t")
 indxList <- makeIndiceList(nrow, ncol)
-landscape_smooth <- smooth_rast(landscape, smoothingFactor, nrow, ncol)
-for(k in 1:nsims){
-   benchmark(out.dat <- rbind(out.dat,runSim(nrow, ncol, landscape_smooth, betas_l, out.dat, R, l)),
-             replications = 10)
+for(i in 1:length(smoothingFactorL)){
+  smoothingFactor <- smoothingFactorL[i]
+  landscape_smooth <- smooth_rast(landscape, smoothingFactor, nrow, ncol)
+  for(j in 1:nreps){
+    intensity_mat <- matrix(0, nrow = nrow, ncol = ncol)
+    for(k in 1:nsims){
+      new_loc <- makeInds(1,indxList[k,]$x,indxList[k,]$y,nrow) # start pos
+      intensity_mat[new_loc[1,]$x, new_loc[1,]$y] <- intensity_mat[new_loc[1,]$x, new_loc[1,]$y] + 1    
+      # locs <- rbind(locs, new_loc)
+      for(iter in 1:(nrow*ncol)){
+        new_loc <- move(new_loc, landscape_smooth, nrow, ncol, R, l, betas_l)
+        # locs <- rbind(locs, new_loc)
+        intensity_mat[new_loc[1,]$x, new_loc[1,]$y] <- intensity_mat[new_loc[1,]$x, new_loc[1,]$y] + 1    
+        }
+      }
+    out.dat <- rbind(out.dat, cbind(smoothingFactor,
+                            meanIntsty1 = mean(intensity_mat[which(landscape_smooth==1)]/((nsims)*(nrow*ncol))),
+                            meanIntsty0 = mean(intensity_mat[which(landscape_smooth==0)])/((nsims)*(nrow*ncol))))
+  }
 }
-
-
+write.table(out.dat, "./outdat-sf-4-50-50", sep = ",")
 hist(pts$lyr.1)
 
 plot(rast(landscape_smooth))
