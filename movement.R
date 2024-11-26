@@ -58,84 +58,84 @@ cells <- data.frame(cell = 1:ncell(landscape), stay = 1:ncell(landscape), right 
                       up = 0, down = 0)
 for(i in 1:nrow(cells)){
   if(i == 1){
-    cells[i,]$left <- ncol
-    cells[i,]$up <- (ncol*nrow - ncol) + 1
-    cells[i,]$down <- i + ncol 
-    cells[i,]$right <- i + 1
+    cells[i,]$left <- (ncol*nrow - ncol) + 1
+    cells[i,]$up <- ncol
+    cells[i,]$down <- i + 1
+    cells[i,]$right <- i + ncol
   }
   else if(i == ncol){
-    cells[i,]$left <- i - 1
-    cells[i,]$up <- ncol * nrow
-    cells[i,]$down <- i + ncol
-    cells[i,]$right <- 1
+    cells[i,]$left <- ncol * nrow
+    cells[i,]$up <- i - 1
+    cells[i,]$down <- 1
+    cells[i,]$right <- i + ncol
   }
   else if(i == ncol*nrow){
-    cells[i,]$left <- i - 1
-    cells[i,]$up <- i - ncol
-    cells[i,]$down <- ncol
-    cells[i,]$right <- ncol*nrow - ncol + 1
+    cells[i,]$left <- i - ncol
+    cells[i,]$up <- i - 1
+    cells[i,]$down <- ncol*nrow - ncol + 1
+    cells[i,]$right <- ncol 
   }
   else if(i == (nrow*ncol - ncol) + 1){
-    cells[i,]$left <- ncol*nrow
-    cells[i,]$up <- i - nrow
-    cells[i,]$down <- 1
-    cells[i,]$right <- i + 1
+    cells[i,]$left <-i - nrow 
+    cells[i,]$up <- ncol*nrow
+    cells[i,]$down <- i + 1
+    cells[i,]$right <- 1
   }
   # bottom row
-  else if((i > (nrow * ncol - ncol) + 1) & (i < nrow*ncol)){
-    cells[i,]$left <- i - 1
-    cells[i,]$up <- i - nrow
-    cells[i,]$down <- i %% nrow
-    cells[i,]$right <- i + 1
+  
+  else if(i %% nrow == 0 & (i != ncol & i != ncol*nrow)){
+    cells[i,]$left <-  i - nrow
+    cells[i,]$up <- i - 1
+    cells[i,]$down <- i - ncol + 1
+    cells[i,]$right <- i + nrow
   }
   # right edge
-  else if(i %% nrow == 0 & (i != ncol & i != ncol*nrow)){
-    cells[i,]$left <- i - 1
-    cells[i,]$up <- i - nrow
-    cells[i,]$down <- i + nrow
-    cells[i,]$right <- i - ncol + 1
+  else if((i > (nrow * ncol - ncol) + 1) & (i < nrow*ncol)){
+    cells[i,]$left <- i - nrow
+    cells[i,]$up <- i - 1
+    cells[i,]$down <- i + 1
+    cells[i,]$right <- i %% ncol
   }
   # left edge
-  else if((i %% nrow == 1) & (i != 1 & i != (nrow*ncol - ncol) + 1)){
-    cells[i,]$left <- i + (ncol - 1) 
-    cells[i,]$up <- i - ncol
-    cells[i,]$down <- i + nrow
-    cells[i,]$right <- i + 1
+  else if((i > 1) & (i < ncol)){
+    cells[i,]$left <- (ncol*nrow - ncol) + i 
+    cells[i,]$up <- i - 1
+    cells[i,]$down <- i + 1
+    cells[i,]$right <- i + ncol
   }
   # top edge
-  else if((i > 1) & (i < ncol)){
-    cells[i,]$left <- i - 1
-    cells[i,]$up <- (nrow*ncol - nrow) + (i %% nrow)
-    cells[i,]$down <- i + nrow
-    cells[i,]$right <- i + 1
+  else if((i %% nrow == 1) & (i != 1 & i != (nrow*ncol - ncol) + 1)){
+    cells[i,]$left <- i - ncol
+    cells[i,]$up <- i + (ncol - 1)
+    cells[i,]$down <- i + 1
+    cells[i,]$right <- i + nrow
   }
   else{
-    cells[i,]$left <- i -1
-    cells[i,]$up <- i - nrow 
-    cells[i,]$down <- (i + nrow)
-    cells[i,]$right <- i + 1
+    cells[i,]$left <- i - nrow
+    cells[i,]$up <- i - 1 
+    cells[i,]$down <- i + 1
+    cells[i,]$right <- i + nrow
     }
   }
   return(cells)
 }
-createTransDat <- function(cells, landscape_smooth){
+createTransDat <- function(cells, landscape_smooth, betas_l){
   transMat <- data.frame(cell = 1:ncell(landscape),num = 0, stay = 0, right = 0, left = 0,
                          up = 0, down = 0)
-  transMat$stay <- exp(0 + c(exp((landscape_smooth) * as.integer(betas_l[as.character(landscape_smooth)]))))
+  transMat$stay <- exp(0 + c((landscape_smooth) * as.integer(betas_l[as.character(landscape_smooth)])))
   for(i in 1:nrow(transMat)){
-    transMat[i,]$left <- exp(-1 + c(exp((landscape_smooth[[cells[i,]$left]]) * as.integer(betas_l[as.character(landscape_smooth[[cells[i,]$left]])]))))
-    transMat[i,]$up <- exp(-1 + c(exp((landscape_smooth[[cells[i,]$up]]) * as.integer(betas_l[as.character(landscape_smooth[[cells[i,]$up]])]))))
-    transMat[i,]$down <- exp(-1 + c(exp((landscape_smooth[[cells[i,]$down]]) * as.integer(betas_l[as.character(landscape_smooth[[cells[i,]$down]])]))))
-    transMat[i,]$right <- exp(-1+ c(exp((landscape_smooth[[cells[i,]$right]]) * as.integer(betas_l[as.character(landscape_smooth[[cells[i,]$right]])]))))
+    transMat[i,]$left <- exp(-1 + c((landscape_smooth[[cells[i,]$left]]) * as.integer(betas_l[as.character(landscape_smooth[[cells[i,]$left]])])))
+    transMat[i,]$up <- exp(-1 + c((landscape_smooth[[cells[i,]$up]]) * as.integer(betas_l[as.character(landscape_smooth[[cells[i,]$up]])])))
+    transMat[i,]$down <- exp(-1 + c((landscape_smooth[[cells[i,]$down]]) * as.integer(betas_l[as.character(landscape_smooth[[cells[i,]$down]])])))
+    transMat[i,]$right <- exp(-1 + c((landscape_smooth[[cells[i,]$right]]) * as.integer(betas_l[as.character(landscape_smooth[[cells[i,]$right]])])))
   }
   return(transMat)
 }
 
 nrow <- 20
 ncol <- 20
-betas_l <- list('0' = -0.1,
+betas_l <- list('0' = -1,
                 '1' = 1)
-landscape <- make_landscape_matrix(nrow, ncol, TRUE)
 nsims <- nrow*ncol
 R <- 1
 l <- 1
@@ -153,8 +153,10 @@ names(out.dat) <- c("rep",
 locs <- data.frame(matrix(0, nrow = 0, ncol = 4))
 names(locs) <- c("x", "y", "t")
 betaOne <- c(1, 2, 3)
+landscape <- make_landscape_matrix(nrow, ncol, TRUE)
 cells <- getSteps(nrow, ncol, landscape)
 for(t in 1:nreps){
+  landscape <- make_landscape_matrix(nrow, ncol, TRUE)
   print(t)
   for(p in 1:length(smoothingFactorL)){
     if(p == 1){
@@ -162,7 +164,7 @@ for(t in 1:nreps){
       smoothingFactor <- 1
     }else{
      smoothingFactor <- smoothingFactorL[p]
-     landscape_smooth <-matrix(focal(rast(landscape), w = smoothingFactor, mean, pad = TRUE,
+     landscape_smooth <-matrix(focal(rast(landscape), w = 3, mean, pad = TRUE,
                                             padValue = NA, na.rm = TRUE, wrap = TRUE),
                                         nrow = nrow, ncol = ncol)
       med <- median(landscape_smooth)
@@ -173,7 +175,7 @@ for(t in 1:nreps){
     for(l in 1:length(betaOne)){
       transDat$num <- 0
       betas_l$'1' <- betaOne[l]
-      transDat <- createTransDat(cells, landscape_smooth)
+      transDat <- createTransDat(cells, landscape_smooth, betas_l)
       for(k in 1:nsims){
         loc <- makeInds(1,k,nrow) # start pos
         transDat[k,]$num <- transDat[k,]$num + 1
@@ -189,15 +191,22 @@ for(t in 1:nreps){
                               smoothingFactor,
                               beta1 = betas_l$'1',
                               beta0 = betas_l$'0',
-                              hb1 = transDat[which(landscape_smooth==1),]$num,
-                              hb0 = transDat[which(landscape_smooth==0),]$num,
+                              hb1 = sum(transDat[which(landscape_smooth==1),]$num),
+                              hb0 = sum(transDat[which(landscape_smooth==0),]$num),
                               b1 = length(which(landscape_smooth == 1)),
                               b0 = length(which(landscape_smooth ==0 ))))
     }
+  }
 }
-  write.table(matrix(transDat$num, nrow = nrow, ncol = ncol),
-              file = paste0("./", "sf", smoothingFactor,"_", "size", nrow, "-", ncol), sep = ",")
-}
+
+out.dat.long <- out.dat %>% mutate(uid = paste0(rep, "-", smoothingFactor, "-", beta1)) %>%
+  mutate(logRSS = log((hb1*b0)/(hb0*b1))) %>%
+  group_by(uid) %>% mutate(meanlogRSS = mean(logRSS))
+
+ggplot(out.dat.long, aes(x = smoothingFactor, y = logRSS, color = factor(beta1))) + geom_smooth()
+ggplot(out.dat.long, aes(x = factor(smoothingFactor), y = logRSS, color = factor(beta1))) + geom_boxplot()
+
+
 write.table(out.dat, "./outdat-sf-1:7-50-50", sep = ",")
 hist(pts$lyr.1)
 
