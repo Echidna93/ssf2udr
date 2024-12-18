@@ -465,12 +465,14 @@ for(t in 1:nreps){
       }
     }
     
-    # ANALYSIS ---------------------------------------------------------------------
+# ANALYSIS ---------------------------------------------------------------------
     
     trk <- make_track(as_tibble(out.dat), .x = x, .y = y, .t = t)
     
-    #trkres <- track_resample(trk, rate = lubridate::minutes(30), tolerance = lubridate::minutes(15))
+    # resample track
+    trkres <- track_resample(trk, rate = lubridate::minutes(30), tolerance = lubridate::minutes(15))
     
+    # make steps
     stps <- steps(trk)
     
     # get random steps
@@ -493,6 +495,10 @@ for(t in 1:nreps){
     # fit ISSF
     mod <- amt::fit_issf(randStps, case_ ~ as.factor(lyr.1) + log(sl_) + cos(ta_) + strata(step_id_))    
     
+    
+    # grab LS regression coefficient
+    mod$model$coefficients[1]
+    
     # redefine out dat
     out.dat <- data.frame(matrix(0, nrow = 1, ncol = 13))
     names(out.dat) <- c("rep",
@@ -508,8 +514,6 @@ for(t in 1:nreps){
                         "hb0",
                         "b1",
                         "b0")
-    
-    
   }
   
 }
