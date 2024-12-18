@@ -21,10 +21,20 @@ make_landscape_matrix <- function(numrow, numcol, binary=TRUE){
 #' TODO implement sorting function
 #' @param 
 #' @export
-make_decision<-function(landscape,R, l, betas_l, cell, cells, transition_prob){
+make_decision<-function(landscape,R, l, betas_l, cell, cells, mods, transition_prob){
   selection <- sample(c(1:5), 1, prob = transition_prob[cell,3:7])
-  selection <- selection + 1
-  cells[cell, selection]
+  selection <- selection + 1 # add one so we don't get the cell reference
+  drctn <- colnames(cells)[selection]
+  if(drctn == "stay"){
+    modVec <- list(ymod = 0, xmod = 0)
+  }
+  if(drctn == "up" || drctn == "down"){
+    modVec <-  list(ymod = mods[cell, selection], xmod = 0)
+  }else{
+    modVec <- list(ymod = 0, xmod = mods[cell, selection]) 
+  }
+
+  c(cell = cells[cell, selection], modVec)
 }
 #' Chooses best possible landscape component to move to
 #' TODO alter in the case of an make_decision being fed an empty list, make 
@@ -205,70 +215,145 @@ createPaddedMatrix <- function(land, sf){
 }
 
 
-getSteps <- function(nrow, ncol, landscape){
-cells <- data.frame(cell = 1:ncell(landscape), stay = 1:ncell(landscape), right = 0, left = 0,
-                      up = 0, down = 0)
-for(i in 1:nrow(cells)){
-  if(i == 1){
-    cells[i,]$left <- (ncol*nrow - ncol) + 1
-    cells[i,]$up <- ncol
-    cells[i,]$down <- i + 1
-    cells[i,]$right <- i + ncol
-  }
-  else if(i == ncol){
-    cells[i,]$left <- ncol * nrow
-    cells[i,]$up <- i - 1
-    cells[i,]$down <- 1
-    cells[i,]$right <- i + ncol
-  }
-  else if(i == ncol*nrow){
-    cells[i,]$left <- i - ncol
-    cells[i,]$up <- i - 1
-    cells[i,]$down <- ncol*nrow - ncol + 1
-    cells[i,]$right <- ncol 
-  }
-  else if(i == (nrow*ncol - ncol) + 1){
-    cells[i,]$left <-i - nrow 
-    cells[i,]$up <- ncol*nrow
-    cells[i,]$down <- i + 1
-    cells[i,]$right <- 1
-  }
-  # bottom row
-  
-  else if(i %% nrow == 0 & (i != ncol & i != ncol*nrow)){
-    cells[i,]$left <-  i - nrow
-    cells[i,]$up <- i - 1
-    cells[i,]$down <- i - ncol + 1
-    cells[i,]$right <- i + nrow
-  }
-  # right edge
-  else if((i > (nrow * ncol - ncol) + 1) & (i < nrow*ncol)){
-    cells[i,]$left <- i - nrow
-    cells[i,]$up <- i - 1
-    cells[i,]$down <- i + 1
-    cells[i,]$right <- i %% ncol
-  }
-  # left edge
-  else if((i > 1) & (i < ncol)){
-    cells[i,]$left <- (ncol*nrow - ncol) + i 
-    cells[i,]$up <- i - 1
-    cells[i,]$down <- i + 1
-    cells[i,]$right <- i + ncol
-  }
-  # top edge
-  else if((i %% nrow == 1) & (i != 1 & i != (nrow*ncol - ncol) + 1)){
-    cells[i,]$left <- i - ncol
-    cells[i,]$up <- i + (ncol - 1)
-    cells[i,]$down <- i + 1
-    cells[i,]$right <- i + nrow
-  }
-  else{
-    cells[i,]$left <- i - nrow
-    cells[i,]$up <- i - 1 
-    cells[i,]$down <- i + 1
-    cells[i,]$right <- i + nrow
+getMods <- function(nrow, ncol, landscape){
+  cells <- data.frame(cell = 1:ncell(landscape), stay = 0,
+                      right = 0, left = 0, up = 0, down = 0)
+  for(i in 1:nrow(cells)){
+    # top left
+    if(i == 1){
+      cells[i,]$left <- -1
+      cells[i,]$up <- 1
+      cells[i,]$down <- 0
+      cells[i,]$right <- 0
+    }
+    # bottom left
+    else if(i == ncol){
+      cells[i,]$left <- -1
+      cells[i,]$up <- 0
+      cells[i,]$down <- 1
+      cells[i,]$right <- 0
+    }
+    # bottom right
+    else if(i == ncol*nrow){
+      cells[i,]$left <- 0
+      cells[i,]$up <- 0
+      cells[i,]$down <- 1
+      cells[i,]$right <- 1
+    }
+    # top right
+    else if(i == (nrow*ncol - ncol) + 1){
+      cells[i,]$left <- 0 
+      cells[i,]$up <- -1
+      cells[i,]$down <- 0
+      cells[i,]$right <- 1
+    }
+    # bottom row
+    else if(i %% nrow == 0 & (i != ncol & i != ncol*nrow)){
+      cells[i,]$left <-  0
+      cells[i,]$up <- 0
+      cells[i,]$down <- 1
+      cells[i,]$right <- 0
+    }
+    # right edge
+    else if((i > (nrow * ncol - ncol) + 1) & (i < nrow*ncol)){
+      cells[i,]$left <- 0
+      cells[i,]$up <- 0
+      cells[i,]$down <- 0
+      cells[i,]$right <- 1
+    }
+    # left edge
+    else if((i > 1) & (i < ncol)){
+      cells[i,]$left <- -1
+      cells[i,]$up <- 0
+      cells[i,]$down <- 0
+      cells[i,]$right <- 0
+    }
+    # top edge
+    else if((i %% nrow == 1) & (i != 1 & i != (nrow*ncol - ncol) + 1)){
+      cells[i,]$left <- 0
+      cells[i,]$up <- -1
+      cells[i,]$down <- 0
+      cells[i,]$right <- 0
+    }
+    else{
+      cells[i,]$left <- 0
+      cells[i,]$up <- 0 
+      cells[i,]$down <- 0
+      cells[i,]$right <- 0
     }
   }
+  return(cells)
+}
+
+
+
+getSteps <- function(nrow, ncol, landscape){
+  cells <- data.frame(cell = 1:ncell(landscape), stay = 1:ncell(landscape),
+                      right = 0, left = 0, up = 0, down = 0)
+  for(i in 1:nrow(cells)){
+    # top left
+    if(i == 1){
+      cells[i,]$left <- (ncol*nrow - ncol) + 1
+      cells[i,]$up <- ncol
+      cells[i,]$down <- i + 1
+      cells[i,]$right <- i + ncol
+    }
+    # bottom left
+    else if(i == ncol){
+      cells[i,]$left <- ncol * nrow
+      cells[i,]$up <- i - 1
+      cells[i,]$down <- 1
+      cells[i,]$right <- i + ncol
+    }
+    # bottom right
+    else if(i == ncol*nrow){
+      cells[i,]$left <- i - ncol
+      cells[i,]$up <- i - 1
+      cells[i,]$down <- ncol*nrow - ncol + 1
+      cells[i,]$right <- ncol
+    }
+    # top right
+    else if(i == (nrow*ncol - ncol) + 1){
+      cells[i,]$left <- i - nrow 
+      cells[i,]$up <- ncol*nrow
+      cells[i,]$down <- i + 1
+      cells[i,]$right <- 1
+    }
+    # bottom row
+    else if(i %% nrow == 0 & (i != ncol & i != ncol*nrow)){
+      cells[i,]$left <-  i - nrow
+      cells[i,]$up <- i - 1
+      cells[i,]$down <- i - ncol + 1
+      cells[i,]$right <- i + nrow
+    }
+    # right edge
+    else if((i > (nrow * ncol - ncol) + 1) & (i < nrow*ncol)){
+      cells[i,]$left <- i - nrow
+      cells[i,]$up <- i - 1
+      cells[i,]$down <- i + 1
+      cells[i,]$right <- i %% ncol
+    }
+    # left edge
+    else if((i > 1) & (i < ncol)){
+      cells[i,]$left <- (ncol*nrow - ncol) + i
+      cells[i,]$up <- i - 1
+      cells[i,]$down <- i + 1
+      cells[i,]$right <- i + ncol
+    }
+    # top edge
+    else if((i %% nrow == 1) & (i != 1 & i != (nrow*ncol - ncol) + 1)){
+      cells[i,]$left <- i - ncol
+      cells[i,]$up <- i + (ncol - 1)
+      cells[i,]$down <- i + 1
+      cells[i,]$right <- i + nrow
+    }
+    else{
+      cells[i,]$left <- i - nrow
+      cells[i,]$up <- i - 1 
+      cells[i,]$down <- i + 1
+      cells[i,]$right <- i + nrow
+      }
+    }
   return(cells)
 }
 createTransDat <- function(cells, landscape_smooth, betas_l){
@@ -284,83 +369,151 @@ createTransDat <- function(cells, landscape_smooth, betas_l){
   return(transMat)
 }
 
-nrow <- 50
-ncol <- 50
+# CONSTANTS --------------------------------------------------------------------
+
+nrow <- 10
+ncol <- 10
+sampPeriod <- 10 # number of samples to throw out before writing
 betas_l <- list('0' = -1,
                 '1' = 1)
 nsims <- nrow*ncol
 R <- 1
 l <- 1
-smoothingFactorL <- c(1,3,5)
+startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
+# smoothingFactorL <- c(1,3,5)
 nreps = 20
-out.dat <- data.frame(matrix(nrow = 0, ncol = 10))
+out.dat <- data.frame(matrix(0, nrow = 1, ncol = 13))
 names(out.dat) <- c("rep",
                     "smoothingFactor",
-                    "moran",
                     "beta1",
                     "beta0",
-                    "beta0",
+                    "x",
+                    "y",
+                    "xMod",
+                    "yMod",
+                    "t",
                     "hb1",
                     "hb0",
                     "b1",
                     "b0")
+sumDat  <- data.frame(matrix(0, nrow = 1, ncol = 5))
+names(sumDat) <- c("rep",
+                    "smoothingFactor",
+                    "selectionCoeff",
+                    "beta1",
+                    "beta0")
+out.dat$t <- as.POSIXct("2016-11-07 00:19:00 UTC")
 locs <- data.frame(matrix(0, nrow = 0, ncol = 4))
 names(locs) <- c("x", "y", "t")
 betaOne <- c(1, 2, 3)
 # betaZero <- c(0, -0.1, -0.3)
 landscape <- make_landscape_matrix(nrow, ncol, TRUE)
 cells <- getSteps(nrow, ncol, landscape)
+mods <- getMods(nrow, ncol, landscape)
+
+# SIMULATION -------------------------------------------------------------------
+
 for(t in 1:nreps){
-  landscape <- make_landscape_matrix(nrow, ncol, TRUE)
-  #print(t)
   for(p in 1:length(smoothingFactorL)){
-    if(p == 1){
+    landscape <- make_landscape_matrix(nrow, ncol, TRUE)
+    if(smoothing == 1){
       landscape_smooth <- landscape
       smoothingFactor <- 1
     }else{
      smoothingFactor <- smoothingFactorL[p]
      pad <- createPaddedMatrix(landscape, smoothingFactor)
      landscape_smooth <- smooth_pad_terra(pad, smoothingFactor, landscape)
-     #landscape_smooth <- smooth_rast(landscape, smoothingFactor)
-     # 
-     # landscape_smooth <-matrix(focal(rast(landscape), w = 3, mean, pad = TRUE,
-     #                                        padValue = NA, na.rm = TRUE, wrap = TRUE),
-     #                                    nrow = nrow, ncol = ncol)
-     #  med <- median(landscape_smooth)
-     #  landscape_smooth[landscape_smooth > med] <- 1
-     #  landscape_smooth[landscape_smooth <= med] <- 0
      }
-    # print(betas_l)
     for(l in 1:length(betaOne)){
       betas_l$'1' <- betaOne[l]
-  #    for(d in 1:length(betaZero)){
-  #      betas_l$'0' <- betaZero[d]
       transDat <- createTransDat(cells, landscape_smooth, betas_l)
       transDat$num <- 0
       for(k in 1:nsims){
+        currTime <- startTime
+        sampIter <- 1
+        xmod <- 0         # x-mod and y mod need reset for each simulation
+        ymod <- 0
         loc <- makeInds(1,k,nrow) # start pos
         transDat[k,]$num <- transDat[k,]$num + 1
-        # locs <- rbind(locs, new_loc)
-        for(iter in 1:(nrow*ncol)){
-          loc$cell <- make_decision(landscape_smooth, R, l, betas_l, loc$cell, cells, transDat)
-          # loc$t <- new_loc$t + 1
+        #locs <- rbind(locs, new_loc)
+        for(iter in 1:(10000)){
+          dec <- make_decision(landscape_smooth, R, l, betas_l, loc$cell, cells, mods, transDat)
+          xmod <- xmod + dec$xmod # one of mods is always zero
+          ymod <- ymod + dec$ymod
+          currTime <- as.POSIXct(currTime) + lubridate::minutes(1)
+          print(currTime)
           transDat[loc$cell,]$num <- transDat[loc$cell,]$num + 1
+          sampIter <- sampIter + 1
+          if(sampIter == sampPeriod){
+            out.dat <- rbind(out.dat, cbind(
+              rep = t,
+              smoothingFactor,
+              x = ceiling(dec$cell/ncol), 
+              y = ifelse(dec$cell %% ncol == 0, ncol, loc$cell %% ncol),
+              xMod = xmod, 
+              yMod = ymod,
+              t = currTime,
+              beta1 = betas_l$'1',
+              beta0 = betas_l$'0',
+              hb1 = sum(transDat[which(landscape_smooth==1),]$num),
+              hb0 = sum(transDat[which(landscape_smooth==0),]$num),
+              b1 = length(which(landscape_smooth == 1)),
+              b0 = length(which(landscape_smooth ==0 ))))
+            sampIter <- 1
+          }
           }
       }
-      out.dat <- rbind(out.dat, cbind(
-                              rep = t,
-                              smoothingFactor,
-                              Moran(raster(landscape_smooth)),
-                              beta1 = betas_l$'1',
-                              beta0 = betas_l$'0',
-                              hb1 = sum(transDat[which(landscape_smooth==1),]$num),
-                              hb0 = sum(transDat[which(landscape_smooth==0),]$num),
-                              b1 = length(which(landscape_smooth == 1)),
-                              b0 = length(which(landscape_smooth ==0 ))))
-      }
     }
+    
+    # ANALYSIS ---------------------------------------------------------------------
+    
+    trk <- make_track(as_tibble(out.dat), .x = x, .y = y, .t = t)
+    
+    #trkres <- track_resample(trk, rate = lubridate::minutes(30), tolerance = lubridate::minutes(15))
+    
+    stps <- steps(trk)
+    
+    # get random steps
+    randStps <- amt::random_steps(stps, n_control = 10)
+    
+    # round the decimal places off
+    randStps$x2_ <- round(randStps$x2_)
+    randStps$y2_ <- round(randStps$y2_)
+    
+    # clamp values to size
+    randStps$x2_ <- ceiling(randStps$x2_/ncol)
+    randStps$y2_ <- ifelse(randStps$y2_ %% ncol == 0, ncol, randStps$y2_ %% ncol)
+    
+    # extract landscape values
+    randStps <- randStps %>% amt::extract_covariates(rast(landscape_smooth))
+    
+    # remove incomplete strata
+    randStps <- randStps %>% amt::remove_incomplete_strata()
+    
+    # fit ISSF
+    mod <- amt::fit_issf(randStps, case_ ~ as.factor(lyr.1) + log(sl_) + cos(ta_) + strata(step_id_))    
+    
+    # redefine out dat
+    out.dat <- data.frame(matrix(0, nrow = 1, ncol = 13))
+    names(out.dat) <- c("rep",
+                        "smoothingFactor",
+                        "beta1",
+                        "beta0",
+                        "x",
+                        "y",
+                        "xMod",
+                        "yMod",
+                        "t",
+                        "hb1",
+                        "hb0",
+                        "b1",
+                        "b0")
+    
+    
   }
-#}
+  
+}
+
 out.dat.long <- out.dat %>% mutate(uid = paste0(rep, "-", smoothingFactor, "-", beta1)) %>%
   mutate(logRSS = log((hb1*b0)/(hb0*b1))) %>%
   group_by(uid) %>% mutate(meanlogRSS = mean(logRSS))
@@ -373,4 +526,4 @@ write.table(out.dat, "./outdat-sf-1:7-50-50", sep = ",")
 hist(pts$lyr.1)
 
 plot(rast(landscape_smooth))
-points(make_track(as_tibble(locs), .x = x, .y = y, .t = t), col = "white", pch=20)
+points(make_track(as_tibble(out.dat), .x = x, .y = y, .t = t), col = "white", pch=20)
