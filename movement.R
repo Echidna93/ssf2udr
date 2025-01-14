@@ -1,10 +1,11 @@
 library(terra)
-library(raster)
+library(raster) # for ncell function
 library(amt)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
-library(doParallel)
+library(doParallel) # for running foreach in parallel
+
 #' initiates a landscape matrix of vectors of random 0's and 1's
 #' @param nrow number of rows in matrix
 #' @param ncol number of columns in matrix
@@ -60,44 +61,11 @@ generateSteps <- function(smoothingFactor){
   steps %>% unique()
 }
 
-getNeighborsPad <- function(land, pad_rast, sf, i, j){
-  pad <- sf
-  l <- 1
-  nbrs <- c()
-  for(k in 1:sf){
-    right <- pad_rast[(pad + i), (pad + j + k)]
-    left <- pad_rast[(pad + i), (pad + j - k)]
-    up <- pad_rast[(pad + i - k), (pad + j)]
-    down <- pad_rast[(pad + i + k),(pad + j)]
-    # diagonal right up
-    dru <- pad_rast[(pad + i - k), (pad + j + k)]
-    # diagonal right down
-    drd <- pad_rast[(pad + i + k), (pad + j + k)]
-    # diagonal left down
-    dld <- pad_rast[(pad + i + k), (pad + j - k)]
-    # diagonal left up
-    dlu <- pad_rast[(pad + i - k), (pad + j - k)]
-    nbrs[l] <- right
-    l <- l + 1
-    nbrs[l] <- left
-    l <- l + 1
-    nbrs[l] <- up
-    l <- l + 1
-    nbrs[l] <- down
-    l <- l + 1
-    nbrs[l] <- dru
-    l <- l + 1
-    nbrs[l] <- drd
-    l <- l + 1
-    nbrs[l] <- dld
-    l <- l + 1
-    nbrs[l] <- dlu
-    l <- l + 1
-  }
-  nbrs[length(nbrs) + 1] <- pad_rast[(pad + i), (pad + j)]
-  nbrs
-}
-
+# smooths by the padded matrix by a factor sf using the terra::focal function
+#' @param pad padded matrix
+#' @param sf smoothing factor; size of focal window
+#' @param land matrix to smooth
+#' @export
 smooth_pad_terra <- function(pad, sf, land){
   smooth <- terra::focal(rast(pad), w = sf, fun = "mean",
                          NAonly = TRUE, padValue = 0)
@@ -108,19 +76,11 @@ smooth_pad_terra <- function(pad, sf, land){
   smooth
   }
 
-smooth_pad_rast <- function(land, pad_rast, sf){
-  smooth_mat <- matrix(0, nrow(land), ncol(land))
-  for(i in 1:nrow(land)){
-    for(j in 1:ncol(land)){
-      smooth_mat[i,j] <- mean(getNeighborsPad(ladn, pad_rast, sf, i, j))
-    }
-  }
-  med <- median(smooth_mat)
-  smooth_mat[smooth_mat > med] <- 1
-  smooth_mat[smooth_mat <= med] <- 0
-  smooth_mat
-}
-
+# creates a matrix which is padded by 2x the smoothing function 
+# on each side of the original domain
+#' @param land the original matrix
+#' @param sf the number of rows to pad by
+#' @export
 createPaddedMatrix <- function(land, sf){
   pad_land <- matrix(NA, nrow(land) + 2*sf, ncol(land) + 2*sf)
   pad_land[(sf + 1):(nrow(land) + sf), (sf + 1):(ncol(land) + sf)] <- land
@@ -143,7 +103,12 @@ createPaddedMatrix <- function(land, sf){
   pad_land
 }
 
-
+# getMods creates a dataframe that tracks when each step 
+# leaves the original domain
+#' @param nrow number of rows
+#' @param ncol number of columns
+#' @param landscape matrix to smooth
+#' @export
 getMods <- function(nrow, ncol, landscape){
   cells <- data.frame(cell = 1:ncell(landscape), stay = 0,
                       right = 0, left = 0, up = 0, down = 0)
@@ -214,10 +179,14 @@ getMods <- function(nrow, ncol, landscape){
   return(cells)
 }
 
-
-
-getSteps <- function(nrow, ncol, landscape){
-  cells <- data.frame(cell = 1:ncell(landscape), stay = 1:ncell(landscape),
+# getSteps creates a dataframe that tracks the index (cell) of the next 
+# step for each cell in the domain
+#' @param nrow number of rows
+#' @param ncol number of columns
+#' @param land matrix to smooth
+#' @export
+getSteps <- function(nrow, ncol, land){
+  cells <- data.frame(cell = 1:ncell(land), stay = 1:ncell(land),
                       right = 0, left = 0, up = 0, down = 0)
   for(i in 1:nrow(cells)){
     # top left
@@ -285,6 +254,14 @@ getSteps <- function(nrow, ncol, landscape){
     }
   return(cells)
 }
+
+# createTransDate creates a dataframe that the probability of movement for 
+# each step on the map
+#' @param cells the dataframe containing the cells # of the possible steps
+#' @param landscape_smooth smoothed domain from smooth_pad_terra
+#' @param betas_l list of beta values for landscape types
+#' @param move_penalty the propensity for the agent to move or not move
+#' @export
 createTransDat <- function(cells, landscape_smooth, betas_l, move_penalty){
   transMat <- data.frame(cell = 1:ncell(landscape),num = 0, stay = 0, right = 0, left = 0,
                          up = 0, down = 0)
