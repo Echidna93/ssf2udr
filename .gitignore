@@ -1,9 +1,12 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
 =======
+=======
+>>>>>>> 86a64268fb0956d02f94205fd1aedd82d458d23b
 # History files
 .Rhistory
 .Rapp.history
@@ -53,4 +56,7 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+<<<<<<< HEAD
 >>>>>>> 86a6426 (Initial commit)
+=======
+>>>>>>> 86a64268fb0956d02f94205fd1aedd82d458d23b
