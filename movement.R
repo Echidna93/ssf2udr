@@ -298,8 +298,8 @@ createTransDat <- function(cells, landscape_smooth, betas_l, move_penalty){
 
 # CONSTANTS --------------------------------------------------------------------
 
-nrow <- 100
-ncol <- 100
+nrow <- 50
+ncol <- 50
 betaOne <- c(1, 1.5, 2, 2.5, 3)
 movePenalties <- c(0, 0.25, 0.5,1)
 thinVals <- c(100, 150, 200) # number of samples to throw out before writing
@@ -359,7 +359,9 @@ rbenchmark::benchmark(for(i in 1:1){
     transDat <- createTransDat(cells, landscape_smooth, betas_l, movePen)
     transDat$num <- 0
     k <- 1
-    metaDat <- rbind(metaDat, foreach(icount(5), .combine = rbind) %dopar% {
+    
+    # doParallel routine
+    metaDat <- rbind(metaDat, foreach(icount(nsims), .combine = rbind) %dopar% {
       library(amt)
       library(tidyr)
       library(raster)
@@ -379,7 +381,7 @@ rbenchmark::benchmark(for(i in 1:1){
      ymod <- 0
      loc <- data.frame(cell = k, ymod = 0, xmod = 0)
      transDat[k,]$num <- transDat[k,]$num + 1
-        for(iter in 1:(1000)){
+        for(iter in 1:(nsims)){
             loc <- makeDecision(landscape_smooth, betas_l, loc$cell, cells, mods, transDat)
             xmod <- xmod + loc$xmod # one of mods is always zero
               ymod <- ymod + loc$ymod
@@ -441,8 +443,6 @@ rbenchmark::benchmark(for(i in 1:1){
           movePenalty = movePen,
           nThin = nThin))
     })
-      
-    
     subDomName <- paste("smoothingFactor", smoothingFactor, sep = "-") # smoothing Factor
     ssubDomName <- paste("beta1", betas_l$'1', sep = "-") # betas
     sssubDomName <- paste("movement-penalty", movePen, sep = "-") # movement penalty
@@ -450,9 +450,10 @@ rbenchmark::benchmark(for(i in 1:1){
     fpath <- paste0(path, "/", subDomName, "/", ssubDomName,
                     "/", sssubDomName, "/", ssssubDomName)
     dir.create(fpath, recursive = TRUE) # create dir
+    fname <- paste0("movement-data-rep-", i, "-realization-", k, sep = "")
     write.table(out.dat,
-                file = paste0(fpath, "/", "movement-data"), sep = ",") # write movement data to file
-    }, replications = 10) 
+                file = paste0(fpath, "/", fname), sep = ",") # write movement data to file
+    }, replications = 1)
 write.table(path, "/", metaDat, file = "summaryData", sep = ",") # write summary data
 
 
