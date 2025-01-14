@@ -4,7 +4,7 @@ library(amt)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
-
+library(doParallel)
 #' initiates a landscape matrix of vectors of random 0's and 1's
 #' @param nrow number of rows in matrix
 #' @param ncol number of columns in matrix
@@ -339,6 +339,9 @@ if(!dir.exists(paste0(path, "/",domName))){
 }
 path <- paste0(path, "/", domName)
 
+# create and register worker nodes
+cl <- parallel::makeCluster(5)
+registerDoParallel(cl)
 
 # SIMULATION -------------------------------------------------------------------
 rbenchmark::benchmark(for(i in 1:1){
@@ -354,8 +357,14 @@ rbenchmark::benchmark(for(i in 1:1){
     landscape_smooth <- smooth_pad_terra(pad, smoothingFactor, landscape)
   }
     transDat <- createTransDat(cells, landscape_smooth, betas_l, movePen)
-    transDat$num <- 0  
-    for(k in 1:1){
+    transDat$num <- 0
+    k <- 1
+    metaDat <- rbind(metaDat, foreach(icount(5), .combine = rbind) %dopar% {
+      library(amt)
+      library(tidyr)
+      library(raster)
+      library(terra)
+      library(dplyr)
       out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
       # create ID for the replicate
       # replicate - smoothingFactor - beta
@@ -420,8 +429,10 @@ rbenchmark::benchmark(for(i in 1:1){
         
         # fit ISSF
         mod <- amt::fit_issf(stps, case_ ~ as.factor(lyr.1) + log(sl_) + sl_ + strata(step_id_))
-
-        metaDat <- rbind(metaDat, cbind(
+        
+        k <- k + 1
+        
+        return(cbind(
           rep = rep,
           beta1 = betas_l$'1',
           slctnCoff = mod$model$coefficients[1], # grab LS regression coefficient
@@ -429,7 +440,7 @@ rbenchmark::benchmark(for(i in 1:1){
           moransI = Moran(raster(landscape)),
           movePenalty = movePen,
           nThin = nThin))
-    }
+    })
       
     
     subDomName <- paste("smoothingFactor", smoothingFactor, sep = "-") # smoothing Factor
