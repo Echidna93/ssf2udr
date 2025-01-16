@@ -330,8 +330,8 @@ if(!dir.exists(paste0(path, "/",domName))){
 path <- paste0(path, "/", domName)
 
 # create and register worker nodes
-cl <- parallel::makeCluster(5)
-registerDoParallel(cl)
+# cl <- parallel::makeCluster(5)
+# registerDoParallel(cl)
 ```
 
 
@@ -490,6 +490,24 @@ land <- ggplot(land_long, aes(Var1, Var2,)) + geom_tile(aes(fill = value)) +
     guides(fill = guide_legend(title ="Landscape type"))
 ggsave("./data/output/figures/land.png")
 
+
+
+# update possible steps to be red
+landscape[1] <- 3
+landscape[2451] <- 2
+landscape[50] <- 2
+landscape[2] <- 2
+landscape[51] <- 2
+
+land_long_possible_steps <- landscape %>% as.data.frame() %>% rownames_to_column("Var1") %>% pivot_longer(-Var1, names_to = "Var2", values_to = "value") %>% mutate(
+Var1 = factor(Var1, levels = 1:ncol),
+Var2 = factor(gsub("V", "", Var2), levels = 1:nrow)) %>% mutate(Var1 = as.numeric(Var1), Var2 = as.numeric(Var2))
+
+land_possible_steps <- ggplot(land_long_possible_steps, aes(Var1, Var2,)) + geom_tile(aes(fill = value)) + 
+  xlab("X") + ylab("Y") + theme(axis.text=element_blank(), axis.ticks=element_blank()) + scale_fill_gradientn(colours = c("white", "black", "red", "blue"),breaks=c(0,1,2,3)) +
+    guides(fill = guide_legend(title ="Landscape type"))
+ggsave("./data/output/figures/land-possible-steps.png")
+
 # create smoothed landscape
 smoothingFactor <- smoothingFactorL[sample(2:length(smoothingFactorL), 1)]
 pad <- createPaddedMatrix(landscape, smoothingFactor)
@@ -539,9 +557,26 @@ ggsave("./data/output/figures/land_smooth.png")
 # # lines(make_track(as_tibble(out.dat), .x = x, .y = y, .t = t), col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
 
 ```
-# METHODS
+## METHODS
 We simulated telemetry data for an agent across a `r I(nrow)` by `r I(ncol)` domain. The agent was directed to select between two habitat types (represented by a zero and a one; Figure 1). Each landscape was smoothed by first padding the original domain (Figure 1) by some smoothing factor (generally an odd-numbered integer between `r I(min(smoothingFactorL))` and `r I(max(smoothingFactorL))``; Figure 2).
+
+### Landscape
+We wanted to simulate a torus for our agent to move on. To do this we utilized modular arithmetic to ensure that if the agent left the original `r I(nrow)` by `r I(ncol)` domain that it ended it's step back in the domain. For example, if the agent were to move from the first cell in the map 
+
+### Movement
+For a given cell, $c$, the agent was programmed to only move to a cells within one cell of $c$ in the rook's case (i.e., only those cells that shared more than one point with cell $c$). The likelihood of the agent moving from a cell $c$ to any of it's neighbors is given by Equation 1. Possible steps are shown in Figure 3.
+
+$$
+p(c_{n}) \ = \ e^{-p + \beta(c_n)} \ (1)
+$$
+Above equation 1 gives the transition probability between the cell $c$ and a neighboring cell $c_n$. This is given by the exponential of the sum of the movement penalty $p$ and the preference of the agent $\beta$ for the neighboring cell $c_n$. The values $p$ and $beta$ were scholastically updated throughout the simulation to examine relationships between movement propensity ($p$), and preference $\beta$.
+
+### Modelling
+To retrieve the downstream selection coefficient for a given habitat type $t$ the function $fit_issf$ from the R-package AMT (cite AMT). 
+
 
 ![Figure 1. An image of an unsmoothed `r I(nrow)` by `r I(ncol)` domain.](./data/output/figures/land.png)
 
-![Figure 1. An image of a `r I(nrow)` by `r I(ncol)` domain smoothed by a factor of `r I(smoothingFactor)``.](./data/output/figures/land_smooth.png)
+![Figure 2. An image of a `r I(nrow)` by `r I(ncol)` domain smoothed by a factor of `r I(smoothingFactor)``.](./data/output/figures/land_smooth.png)
+
+![Figure 3. An image of an `r I(nrow)` by `r I(ncol)` domain with possible steps (red) the agent could take from the first cell (blue).](./data/output/figures/land-possible-steps.png)
