@@ -268,24 +268,26 @@ createTransDat <- function(cells, landscape_smooth, betas_l, move_penalty){
   transMat$stay <- exp(0 + c((landscape_smooth) * as.integer(betas_l[as.character(landscape_smooth)])))
   transMat$left <- exp(-move_penalty + c((landscape_smooth[cells$left]) * as.integer(betas_l[as.character(landscape_smooth[cells$left])])))
   transMat$up <- exp(-move_penalty + c((landscape_smooth[cells$up]) * as.integer(betas_l[as.character(landscape_smooth[cells$up])])))
-  transMat$down <- exp(-move_penalty + c((landscape_smooth[cells$left]) * as.integer(betas_l[as.character(landscape_smooth[cells$down])])))
+  transMat$down <- exp(-move_penalty + c((landscape_smooth[cells$down]) * as.integer(betas_l[as.character(landscape_smooth[cells$down])])))
   transMat$right <- exp(-move_penalty + c((landscape_smooth[cells$right]) * as.integer(betas_l[as.character(landscape_smooth[cells$right])])))
   return(transMat)
 }
 
 # CONSTANTS --------------------------------------------------------------------
 
-nrow <- 50
-ncol <- 50
-betaOne <- c(1, 1.5, 2, 2.5, 3)
-movePenalties <- c(0, 0.25, 0.5,1)
+nrow <- 100
+ncol <- 100
+betaOne <- c(1,2, 2.5)
+movePenalties <- c(0, 0.5, 1)
 thinVals <- c(100, 150, 200) # number of samples to throw out before writing
 betas_l <- list('0' = 0,
                 '1' = 1)
 nsims <- nrow*ncol
 startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
-smoothingFactorL <- c(1,3,5)
-nreps = 2
+smoothingFactorL <- c(1,3,5,7)
+vars <- expand.grid(betaOne, movePenalties, thinVals, smoothingFactorL)
+vars <- vars[sample(1:nrow(vars)), ]
+nreps = 100
 out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
 # create ID for the replicate
 # replicate - smoothingFactor - beta
@@ -296,13 +298,13 @@ names(out.dat) <- c("t",
 # metaDat holds data on regression coefficents
 metaDat  <- data.frame(matrix(nrow = 0, ncol = 7))
 names(metaDat) <- c("rep",
-                  "beta", # beta1 is the assigned coeff
-                  "slctnCoff", # selection coeff is the retrieved from regression
-                  "smoothngFctr",
-                  "moransI",
-                  "movePenalty",
-                  "nThin"
-                  )
+                    "beta", # beta1 is the assigned coeff
+                    "slctnCoff", # selection coeff is the retrieved from regression
+                    "smoothngFctr",
+                    "moransI",
+                    "movePenalty",
+                    "nThin"
+)
 landscape <- makeLandscapeMatrix(nrow, ncol, TRUE)
 cells <- getSteps(nrow, ncol, landscape)
 mods <- getMods(nrow, ncol, landscape)
@@ -317,141 +319,162 @@ if(!dir.exists(paste0(path, "/",domName))){
 path <- paste0(path, "/", domName)
 
 # create and register worker nodes
-cl <- parallel::makeCluster(5)
-registerDoParallel(cl)
+# cl <- parallel::makeCluster(4)
+# registerDoParallel(cl)
 
 # SIMULATION -------------------------------------------------------------------
-rbenchmark::benchmark(for(i in 1:1){
+for(i in 69:nrow(vars)){
   landscape <- makeLandscapeMatrix(nrow, ncol, TRUE)
-  smoothingFactor <- smoothingFactorL[sample(1:length(smoothingFactorL), 1)]
-  movePen <- movePenalties[sample(1:length(movePenalties), 1)]
-  betas_l$'1' <- betaOne[sample(1:length(betaOne), 1)]
-  nThin <- thinVals[sample(1:length(thinVals), 1)] # grabbing the thinning value for this iteration
+  smoothingFactor <- vars[i,4] #smoothingFactorL[sample(1:length(smoothingFactorL), 1)]
+  movePen <- vars[i,2] #movePenalties[sample(1:length(movePenalties), 1)]
+  betas_l$'1' <- vars[i,1] #betaOne[sample(1:length(betaOne), 1)]
+  nThin <-  vars[i,3] # thinVals[sample(1:length(thinVals), 1)] # grabbing the thinning value for this iteration
   if(smoothingFactor == 1){
     landscape_smooth <- landscape
   }else{
     pad <- createPaddedMatrix(landscape, smoothingFactor)
     landscape_smooth <- smooth_pad_terra(pad, smoothingFactor, landscape)
   }
-    transDat <- createTransDat(cells, landscape_smooth, betas_l, movePen)
-    transDat$num <- 0
-    k <- 1
+  transDat <- createTransDat(cells, landscape_smooth, betas_l, movePen)
+  transDat$num <- 0
+  # doParallel routine
+  for(k in 1:15){
+    out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
+    # create ID for the replicate
+    # replicate - smoothingFactor - beta
+    names(out.dat) <- c("t",
+                        "cell",
+                        "xMod",
+                        "yMod")
+    # metaDat holds data on regression
+    currTime <- startTime
+    sampIter <- 1
+    xmod <- 0 # x-mod and y mod need reset for each simulation
+    ymod <- 0
+    loc <- data.frame(cell = sample(1:ncell(landscape_smooth), 1, replace = TRUE), ymod = 0, xmod = 0)
+    transDat[k,]$num <- transDat[k,]$num + 1
+    for(iter in 1:(nsims)){
+      loc <- makeDecision(landscape_smooth, betas_l, loc$cell, cells, mods, transDat)
+      xmod <- xmod + loc$xmod # one of mods is always zero
+      ymod <- ymod + loc$ymod
+      currTime <- as.POSIXct(currTime) + lubridate::minutes(1)
+      transDat[loc$cell,]$num <- transDat[loc$cell,]$num + 1
+      out.dat <- rbind(out.dat, cbind(
+        t = currTime,
+        cell = loc$cell,
+        xMod = xmod, # keeps track of the number of times agent has passed the x-axis
+        yMod = ymod  # keeps track of the number of times agent has passed the y-axis
+      ))
+    }
+    # ANALYSIS ---------------------------------------------------------------------
     
-    # doParallel routine
-    metaDat <- rbind(metaDat, foreach(icount(nsims), .combine = rbind) %dopar% {
-      library(amt)
-      library(tidyr)
-      library(raster)
-      library(terra)
-      library(dplyr)
-      out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
-      # create ID for the replicate
-      # replicate - smoothingFactor - beta
-      names(out.dat) <- c("t",
-                          "cell",
-                          "xMod",
-                          "yMod")
-     # metaDat holds data on regression
-     currTime <- startTime
-     sampIter <- 1
-     xmod <- 0 # x-mod and y mod need reset for each simulation
-     ymod <- 0
-     loc <- data.frame(cell = k, ymod = 0, xmod = 0)
-     transDat[k,]$num <- transDat[k,]$num + 1
-        for(iter in 1:(nsims)){
-            loc <- makeDecision(landscape_smooth, betas_l, loc$cell, cells, mods, transDat)
-            xmod <- xmod + loc$xmod # one of mods is always zero
-              ymod <- ymod + loc$ymod
-              currTime <- as.POSIXct(currTime) + lubridate::minutes(1)
-              transDat[loc$cell,]$num <- transDat[loc$cell,]$num + 1
-              sampIter <- sampIter + 1
-              out.dat <- rbind(out.dat, cbind(
-                t = currTime,
-                cell = loc$cell,
-                xMod = xmod, # keeps track of the number of times agent has passed the x-axis
-                yMod = ymod  # keeps track of the number of times agent has passed the y-axis
-              ))
-              #print(out.dat)
+    # thin the movement dataset   
+    out.dat <- out.dat[seq(1:nrow(out.dat)) %% nThin == 0,]   
+    
+    # make x and y column
+    out.dat$x = out.dat$cell %% ncol
+    out.dat$y = out.dat$cell/ncol
+    out.dat$t = as.POSIXct(out.dat$t)
+    trk <- make_track(as_tibble(out.dat), .x = x,
+                      .y = y,
+                       .t = t) #%>% random_points() %>% extract_covariates(rast(landscape_smooth))
 
-          }
-        # ANALYSIS ---------------------------------------------------------------------
-        
-        # thin the movement dataset   
-        out.dat <- out.dat[seq(1:nrow(out.dat)) %% nThin == 0,]   
-     
-        # make x and y column
-        out.dat$x = ceiling(out.dat$cell/ncol)
-        out.dat$y = ifelse(out.dat$cell %% ncol == 0, ncol, out.dat$cell %% ncol)
-        out.dat$t = as.POSIXct(out.dat$t)
-        trk <- make_track(as_tibble(out.dat), .x = x,
-                          .y = y,
-                          .t = t)
-        # resample track
-        trkRes <- track_resample(trk, rate = lubridate::hours(1), tolerance = lubridate::minutes(15))
-        stps  <- steps(trkRes) %>% amt::random_steps(n_control = 30)
+    # mod <- stats::glm(case_ ~ lyr.1, family = "binomial", data = trk)
+    # mod$model$coefficients[2]
+    # mod <- trk %>% random_points() %>% extract_covariates(rast(landscape_smooth)) %>% amt::fit_rsf(case_ ~ lyr.1)
+    # resample track
+    # trkRes <- track_resample(trk, rate = lubridate::hours(1), tolerance = lubridate::minutes(5))
+    hist(steps(trk)$sl_)
+    stps  <- steps(trk) %>% random_steps(n_control = 30)
 
-        # round the decimal places off
-        stps$x2_ <- round(stps$x2_)
-        stps$y2_ <- round(stps$y2_)
+    # round the decimal places off
+    # clamp values to size
+    stps[which(!stps$case_),]$x2_ <- stps[which(!stps$case_),]$x2_ %% ncol # row
+    stps[which(!stps$case_),]$y2_ <- stps[which(!stps$case_),]$y2_ %% ncol # row
+    
+    # extract landscape values
+    stps <- stps %>% amt::extract_covariates(rast(landscape_smooth))
 
-        # clamp values to size
-        stps$x2_ <- ceiling(stps$x2_/ncol) # column
-        stps$y2_ <- stps$y2_ %% ncol # row
+    # remove incomplete strata
+    # randStps <- randStps %>% amt::remove_incomplete_strata() # might not need this?
+    # add integer to avoid sl of zero
+    stps$sl_ <- stps$sl_ + 1
 
-        # extract landscape values
-        stps <- stps %>% amt::extract_covariates(rast(landscape_smooth))
-
-        # remove incomplete strata
-        # randStps <- randStps %>% amt::remove_incomplete_strata() # might not need this?
-        # add integer to avoid sl of zero
-        stps$sl_ <- stps$sl_ + 1
-        
-        # fit ISSF
-        mod <- amt::fit_issf(stps, case_ ~ as.factor(lyr.1) + log(sl_) + sl_ + strata(step_id_))
-        
-        k <- k + 1
-        
-        return(cbind(
-          rep = rep,
-          beta1 = betas_l$'1',
-          slctnCoff = mod$model$coefficients[1], # grab LS regression coefficient
-          smoothingFctr = smoothingFactor,
-          moransI = Moran(raster(landscape)),
-          movePenalty = movePen,
-          nThin = nThin))
-    })
-    subDomName <- paste("smoothingFactor", smoothingFactor, sep = "-") # smoothing Factor
-    ssubDomName <- paste("beta1", betas_l$'1', sep = "-") # betas
-    sssubDomName <- paste("movement-penalty", movePen, sep = "-") # movement penalty
-    ssssubDomName <- paste("thinning", nThin, sep = "-")
-    fpath <- paste0(path, "/", subDomName, "/", ssubDomName,
-                    "/", sssubDomName, "/", ssssubDomName)
-    dir.create(fpath, recursive = TRUE) # create dir
-    fname <- paste0("movement-data-rep-", i, "-realization-", k, sep = "")
-    write.table(out.dat,
-                file = paste0(fpath, "/", fname), sep = ",") # write movement data to file
-    }, replications = 1)
-write.table(path, "/", metaDat, file = "summaryData", sep = ",") # write summary data
+    # fit ISSF
+    mod <- amt::fit_issf(stps, case_ ~ log(sl_) + sl_ + factor(lyr.1) + strata(step_id_))
+    
+    k <- k + 1
+    
+    # Below thins the trajectories exclude trajectories that cross the boundary
+    # out.dat$xMod <- if_else(is.na(out.dat$xMod), 0, out.dat$xMod)
+    # out.dat$yMod <- if_else(is.na(out.dat$yMod), 0, out.dat$yMod)
+    # 
+    # # create lagged vector for previous statement
+    # out.dat$xModPrev <- data.table::shift(out.dat$xMod, 1, fill = 0)
+    # out.dat$yModPrev <- data.table::shift(out.dat$yMod, 1, fill = 0)
+    # # filter out points where xModPrev doesn't equal xMod
+    # out.dat.filter <- out.dat %>% filter(xModPrev == xMod, yModPrev == yMod)
+    # 
+    # trk <- make_track(as_tibble(out.dat), .x = x,
+    #                   .y = y,
+    #                   .t = t)
+    # plot(rast(landscape_smooth), xlim = c(1,ncol), ylim = c(1,nrow),
+    #      col = gray.colors(10, start = 0.3, end = 0.9, gamma = 2.2,
+    #                        alpha = NULL))
+    # lines(make_track(as_tibble(out.dat.filter), .x = y, .y = x, .t = t),
+    #       col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
+    # 
+    # 
+    print(exp(mod$model$coefficients[3]))
+    metaDat <- rbind(metaDat,cbind(
+      rep = i,
+      beta1 = unlist(betas_l$'1'),
+      slctnCoff = unlist(exp(mod$model$coefficients[3])), # grab LS regression coefficient
+      smoothingFctr = unlist(smoothingFactor),
+      moransI = unlist(Moran(raster(landscape_smooth))),
+      movePenalty = unlist(movePen),
+      nThin = unlist(nThin)))
+    # if(l %% 100 == 0){
+    #   subDomName <- paste("smoothingFactor", smoothingFactor, sep = "-") # smoothing Factor
+    #   ssubDomName <- paste("beta1", betas_l$'1', sep = "-") # betas
+    #   sssubDomName <- paste("movement-penalty", movePen, sep = "-") # movement penalty
+    #   ssssubDomName <- paste("thinning", nThin, sep = "-")
+    #   fname <- paste0("-", subDomName, "-", ssubDomName,
+    #                   "-", sssubDomName, "-", ssssubDomName, "-movement-data-rep-", i, "-realization-", k, sep = "")
+    #   #dir.create(fpath, recursive = TRUE) # create dir
+    #   #ame <- paste0("movement-data-rep-", i, "-realization-", k, sep = "")
+    #   write.table(out.dat,
+    #               file = paste0(path, "/", fname), sep = ",")
+    #   
+    write.table(data.frame(metaDat), file = paste0(path, "/", "metaData","/", "summaryData-2"), sep = ",") # write summary data
+    # }
+    
+    }
+  
+}
 
 
 
 # PLOTTING ---------------------------------------------------------------------
 
 # Below thins the trajectories exclude trajectories that cross the boundary
+out.dat$xMod <- if_else(is.na(out.dat$xMod), 0, out.dat$xMod)
+out.dat$yMod <- if_else(is.na(out.dat$yMod), 0, out.dat$yMod)
 
 # create lagged vector for previous statement
 out.dat$xModPrev <- data.table::shift(out.dat$xMod, 1, fill = 0)
 out.dat$yModPrev <- data.table::shift(out.dat$yMod, 1, fill = 0)
 # filter out points where xModPrev doesn't equal xMod
 out.dat.filter <- out.dat %>% filter(xModPrev == xMod, yModPrev == yMod)
+
 trk <- make_track(as_tibble(out.dat), .x = x,
                   .y = y,
                   .t = t)
 plot(rast(landscape_smooth), xlim = c(1,ncol), ylim = c(1,nrow),
      col = gray.colors(10, start = 0.3, end = 0.9, gamma = 2.2,
                        alpha = NULL))
-lines(make_track(as_tibble(out.dat.filter), .x = x, .y = y, .t = t),
-      col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
+points(trk[which(trk$case_ == TRUE),],col = "red", lwd=1, xlim = c(0,50), ylim=c(0,50))
+points(trk[which(trk$case_ == FALSE),],col = "yellow", lwd=1, xlim = c(0,50), ylim=c(0,50))
 
 
 # PLOT PATH WITH GGPLOT --------------------------------------------------------
@@ -459,32 +482,32 @@ lines(make_track(as_tibble(out.dat.filter), .x = x, .y = y, .t = t),
 #   geom_path(aes(color="red")) + scale_x_continuous(limits = c(1,ncol)) + scale_y_continuous(limits = c(1,nrow))
 
 # pivot on the data.frame 
-#j <- landscape_smooth %>% as.data.frame() %>% rownames_to_column("Var1") %>% pivot_longer(-Var1, names_to = "Var2", values_to = "value") %>% mutate(
-# Var1 = factor(Var1, levels = 1:ncol),
-# Var2 = factor(gsub("V", "", Var2), levels = 1:nrow)) 
+j <- landscape_smooth %>% as.data.frame() %>% rownames_to_column("Var1") %>% pivot_longer(-Var1, names_to = "Var2", values_to = "value") %>% mutate(
+Var1 = factor(Var1, levels = 1:ncol),
+Var2 = factor(gsub("V", "", Var2), levels = 1:nrow))
 
 # plot
-# ggplot(j, aes(x, y,)) + geom_tile(aes(fill = value)) +
-#   scale_fill_gradient(low = "white", high="black") +
-#   geom_path(data = out.dat, aes(x = x, y = y, color = "red")) +
-#   geom_point(data = out.dat, aes(x = x, y = y, color = "pink"))
+ggplot(j, aes(Var1, Var2,)) + geom_tile(aes(fill = value)) +
+  scale_fill_gradient(low = "white", high="black") +
+  geom_path(data = out.dat, aes(x = x, y = y, color = "red")) +
+  geom_point(data = out.dat, aes(x = x, y = y, color = "pink"))
 
 # plot on continuous domain
 out.dat$coord  <-  paste0("(", out.dat$xMod, ",", out.dat$yMod, ")")
 ggplot(j, aes(x = Var1, y = Var2,)) + 
-    facet_grid(~ coord) +   
-    geom_tile(aes(fill = value)) +
-    scale_fill_gradient(low = "white", high="black") +
-    geom_path(data = out.dat, aes(x = x, y = y, color = "red")) +
-    geom_point(data = out.dat, aes(x = x, y = y, color = "pink"))
-    
+  facet_grid(~ coord) +   
+  geom_tile(aes(fill = value)) +
+  scale_fill_gradient(low = "white", high="black") +
+  geom_path(data = out.dat, aes(x = x, y = y, color = "red")) +
+  geom_point(data = out.dat, aes(x = x, y = y, color = "pink"))
+
 
 
 # out.dat.long <- out.dat %>% mutate(uid = paste0(rep, "-", smoothingFactor, "-", beta1)) %>%
 #   mutate(logRSS = loghttp://127.0.0.1:17001/graphics/e7beda11-ce12-411c-adbf-ce0c4c7660ec.png((hb1*b0)/(hb0*b1))) %>%
 #   group_by(uid) %>% mutate(meanlogRSS = mean(logRSS))
 # 
-ggplot(metaDat, aes(y = unlist(slctnCoff), x = unlist(smoothingFctr), color = factor(unlist(beta1)))) + geom_smooth()
+ggplot(metaDat, aes(y = unlist(slctnCoff), x = unlist(smoothingFctr), color = factor(unlist(beta1)))) + geom_boxplot()
 # ggplot(out.dat.long, aes(x = factor(smoothingFactor), y = logRSS, color = factor(beta1))) + geom_boxplot()
 # 
 # 
