@@ -2,10 +2,16 @@
 title: "ssf2ud-writeup"
 author: "alex jack"
 date: "2025-01-14"
-output: html_document
+output:
+  word_document:
+    # style from https://gsverhoeven.github.io/post/zotero-rmarkdown-csl/
+    reference_docx: doc_style.docx
+bibliography: SSF2UD.json #https://www.zotero.org/styleshttps://www.zotero.org/styles
+csl: ecology.csl 
 ---
 
 ```{r setup, include=FALSE, echo=FALSE}
+library(rbbt) # for importing Zotero data
 library(terra)
 library(raster) # for ncell function
 library(amt)
@@ -567,12 +573,12 @@ We wanted to simulate a torus for our agent to move on. To do this we utilized m
 For a given cell, $c$, the agent was programmed to only move to a cells within one cell of $c$ in the rook's case (i.e., only those cells that shared more than one point with cell $c$). The likelihood of the agent moving from a cell $c$ to any of it's neighbors is given by Equation 1. Possible steps are shown in Figure 3.
 
 $$
-p(c_{n}) \ = \ e^{-p + \beta(c_n)} \ (1)
+p(c_{n}) \ = \ e^{-p + \theta(c_n)} \ (1)
 $$
-Above equation 1 gives the transition probability between the cell $c$ and a neighboring cell $c_n$. This is given by the exponential of the sum of the movement penalty $p$ and the preference of the agent $\beta$ for the neighboring cell $c_n$. The values $p$ and $beta$ were scholastically updated throughout the simulation to examine relationships between movement propensity ($p$), and preference $\beta$.
+Above equation 1 gives the transition probability between the cell $c$ and a neighboring cell $c_n$. This is given by the exponential of the sum of the movement penalty $p$ and the preference of the agent $\beta$ for the neighboring cell $c_n$. The values $p$ and $theta$ were scholastically updated throughout the simulation to examine relationships between movement propensity ($p$), and preference $\theta$.
 
 ### Modelling
-To retrieve the downstream selection coefficient for a given habitat type $t$ the function $fit_issf$ from the R-package AMT (cite AMT). 
+To retrieve the downstream selection coefficient for a given habitat type $t$ the function $fit_issf$ from the R-package AMT @signerAnimalMovementTools2019. 
 
 
 ![Figure 1. An image of an unsmoothed `r I(nrow)` by `r I(ncol)` domain.](./data/output/figures/land.png)
