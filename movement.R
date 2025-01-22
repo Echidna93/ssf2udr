@@ -470,11 +470,12 @@ out.dat.filter <- out.dat %>% filter(xModPrev == xMod, yModPrev == yMod)
 trk <- make_track(as_tibble(out.dat), .x = x,
                   .y = y,
                   .t = t)
-plot(rast(landscape_smooth), xlim = c(1,ncol), ylim = c(1,nrow),
+plot(rast(landscape_smooth), xlim = c(0,ncol-1), ylim = c(0,nrow-1),
      col = gray.colors(10, start = 0.3, end = 0.9, gamma = 2.2,
                        alpha = NULL))
-points(trk[which(trk$case_ == TRUE),],col = "red", lwd=1, xlim = c(0,50), ylim=c(0,50))
-points(trk[which(trk$case_ == FALSE),],col = "yellow", lwd=1, xlim = c(0,50), ylim=c(0,50))
+lines(make_track(out.dat.filter, .x = x, .y =y, .t = t),
+      col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
+#points(trk[which(trk$case_ == FALSE),],col = "yellow", lwd=1, xlim = c(0,50), ylim=c(0,50))
 
 
 # PLOT PATH WITH GGPLOT --------------------------------------------------------
@@ -489,7 +490,7 @@ Var2 = factor(gsub("V", "", Var2), levels = 1:nrow))
 # plot
 ggplot(j, aes(Var1, Var2,)) + geom_tile(aes(fill = value)) +
   scale_fill_gradient(low = "white", high="black") +
-  geom_path(data = out.dat, aes(x = x, y = y, color = "red")) +
+  geom_path(data = out.dat.filter, aes(x = x, y = y, color = "red")) +
   geom_point(data = out.dat, aes(x = x, y = y, color = "pink"))
 
 # plot on continuous domain
