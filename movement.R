@@ -5,6 +5,7 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(doParallel) # for running foreach in parallel
+library(MASS) # for mvrnorm
 
 #' initiates a landscape matrix of vectors of random 0's and 1's
 #' @param nrow number of rows in matrix
@@ -285,9 +286,8 @@ betas_l <- list('0' = 0,
 nsims <- nrow*ncol
 startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
 smoothingFactorL <- c(1,3,5,7)
-vars <- expand.grid(betaOne, movePenalties, thinVals, smoothingFactorL)
-vars <- vars[sample(1:nrow(vars)), ]
 nreps = 100
+ntraj <- 10
 out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
 # create ID for the replicate
 # replicate - smoothingFactor - beta
@@ -296,11 +296,18 @@ names(out.dat) <- c("t",
                     "xMod",
                     "yMod")
 # metaDat holds data on regression coefficents
-metaDat  <- data.frame(matrix(nrow = 0, ncol = 7))
+metaDat  <- data.frame(matrix(nrow = 0, ncol = 13))
+
 names(metaDat) <- c("rep",
                     "beta", # beta1 is the assigned coeff
                     "slctnCoff", # selection coeff is the retrieved from regression
+                    "varslctn", 
                     "smoothngFctr",
+                    "sl_",
+                    "shape",
+                    "scale",
+                    "var_log_sl_",
+                    "var_sl_log_sl_",
                     "moransI",
                     "movePenalty",
                     "nThin"
@@ -317,18 +324,18 @@ if(!dir.exists(paste0(path, "/",domName))){
   dir.create(paste0(path, "/", domName)) # create dir
 }
 path <- paste0(path, "/", domName)
-
+landscape <- makeLandscapeMatrix(nrow, ncol, TRUE)
 # create and register worker nodes
 # cl <- parallel::makeCluster(4)
 # registerDoParallel(cl)
 
 # SIMULATION -------------------------------------------------------------------
-for(i in 69:nrow(vars)){
-  landscape <- makeLandscapeMatrix(nrow, ncol, TRUE)
-  smoothingFactor <- vars[i,4] #smoothingFactorL[sample(1:length(smoothingFactorL), 1)]
-  movePen <- vars[i,2] #movePenalties[sample(1:length(movePenalties), 1)]
-  betas_l$'1' <- vars[i,1] #betaOne[sample(1:length(betaOne), 1)]
-  nThin <-  vars[i,3] # thinVals[sample(1:length(thinVals), 1)] # grabbing the thinning value for this iteration
+for(h in 1:nvars){
+for(i in 1:length(movePenalties)){
+  smoothingFactor <- 3 #smoothingFactorL[sample(1:length(smoothingFactorL), 1)]
+  movePen <- movePenalties[i] #movePenalties[sample(1:length(movePenalties), 1)]
+  betas_l$'1' <- 1.5 #betaOne[sample(1:length(betaOne), 1)]
+  nThin <- 150 # thinVals[sample(1:length(thinVals), 1)] # grabbing the thinning value for this iteration
   if(smoothingFactor == 1){
     landscape_smooth <- landscape
   }else{
@@ -338,7 +345,7 @@ for(i in 69:nrow(vars)){
   transDat <- createTransDat(cells, landscape_smooth, betas_l, movePen)
   transDat$num <- 0
   # doParallel routine
-  for(k in 1:15){
+  for(k in 1:ntraj){
     out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
     # create ID for the replicate
     # replicate - smoothingFactor - beta
@@ -399,9 +406,13 @@ for(i in 69:nrow(vars)){
     # randStps <- randStps %>% amt::remove_incomplete_strata() # might not need this?
     # add integer to avoid sl of zero
     stps$sl_ <- stps$sl_ + 1
+    
+    stps <- stps %>% mutate(sl_ = sl_ + 1,
+                            log_sl_ = log(sl_), 
+                            land = as.factor(lyr.1))
 
     # fit ISSF
-    mod <- amt::fit_issf(stps, case_ ~ log(sl_) + sl_ + factor(lyr.1) + strata(step_id_))
+    mod <- amt::fit_issf(stps, case_ ~ log_sl_ + sl_ + land + strata(step_id_))
     
     k <- k + 1
     
@@ -425,35 +436,42 @@ for(i in 69:nrow(vars)){
     #       col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
     # 
     # 
-    print(exp(mod$model$coefficients[3]))
+    print(mod$model$coefficients[3])
+    
+    # grab sl_ and log_sl_ distr
+    norms <- mvrnorm(ntraj, cbind(mod$model$coefficients['log_sl_'],
+                                  mod$model$coefficients['sl_']),
+                     vcov(mod$model)[1:2, 1:2])
+    scale <- update_sl_distr(mod, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$scale
+    shape <- update_sl_distr(mod, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$shape
     metaDat <- rbind(metaDat,cbind(
       rep = i,
       beta1 = unlist(betas_l$'1'),
-      slctnCoff = unlist(exp(mod$model$coefficients[3])), # grab LS regression coefficient
+      slctnCoff = unlist(mod$model$coefficients[3]), # grab LS regression coefficient
+      var_slctn = unlist(vcov(mod$model)[3,3]), # grab variance
+      sl_ = unlist(mod$model$coefficients['sl_']),
+      scale = scale, # grab variance
+      shape = shape,
+      var_log_sl_ = unlist(vcov(mod$model)[1,1]), # grab variance
+      var_sl_log_sl_ = unlist(vcov(mod$model)[1,2]),
       smoothingFctr = unlist(smoothingFactor),
       moransI = unlist(Moran(raster(landscape_smooth))),
       movePenalty = unlist(movePen),
       nThin = unlist(nThin)))
-    # if(l %% 100 == 0){
-    #   subDomName <- paste("smoothingFactor", smoothingFactor, sep = "-") # smoothing Factor
-    #   ssubDomName <- paste("beta1", betas_l$'1', sep = "-") # betas
-    #   sssubDomName <- paste("movement-penalty", movePen, sep = "-") # movement penalty
-    #   ssssubDomName <- paste("thinning", nThin, sep = "-")
-    #   fname <- paste0("-", subDomName, "-", ssubDomName,
-    #                   "-", sssubDomName, "-", ssssubDomName, "-movement-data-rep-", i, "-realization-", k, sep = "")
-    #   #dir.create(fpath, recursive = TRUE) # create dir
-    #   #ame <- paste0("movement-data-rep-", i, "-realization-", k, sep = "")
-    #   write.table(out.dat,
-    #               file = paste0(path, "/", fname), sep = ",")
-    #   
-    write.table(data.frame(metaDat), file = paste0(path, "/", "metaData","/", "summaryData-2"), sep = ",") # write summary data
-    # }
-    
-    }
-  
+      # subDomName <- paste("smoothingFactor", smoothingFactor, sep = "-") # smoothing Factor
+      # ssubDomName <- paste("beta1", betas_l$'1', sep = "-") # betas
+      # sssubDomName <- paste("movement-penalty", movePen, sep = "-") # movement penalty
+      # ssssubDomName <- paste("thinning", nThin, sep = "-")
+      # fname <- paste0("-", subDomName, "-", ssubDomName,
+      #                 "-", sssubDomName, "-", ssssubDomName, "-movement-data-rep-", i, "-realization-", k, sep = "")
+      # #dir.create(fpath, recursive = TRUE) # create dir
+      # #ame <- paste0("movement-data-rep-", i, "-realization-", k, sep = "")
+      # write.table(out.dat,
+      #             file = paste0(path, "/", fname), sep = ",")
+      # 
+  }
 }
-
-
+}
 
 # PLOTTING ---------------------------------------------------------------------
 
@@ -470,7 +488,7 @@ out.dat.filter <- out.dat %>% filter(xModPrev == xMod, yModPrev == yMod)
 trk <- make_track(as_tibble(out.dat), .x = x,
                   .y = y,
                   .t = t)
-plot(rast(landscape_smooth), xlim = c(0,ncol-1), ylim = c(0,nrow-1),
+plot(rast(landscape_smooth), xlim = c(1,ncol-1), ylim = c(1,nrow-1),
      col = gray.colors(10, start = 0.3, end = 0.9, gamma = 2.2,
                        alpha = NULL))
 lines(make_track(out.dat.filter, .x = x, .y =y, .t = t),
