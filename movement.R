@@ -287,7 +287,7 @@ nsims <- nrow*ncol
 startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
 smoothingFactorL <- c(1,3,5,7)
 nreps = 100
-ntraj <- 10
+ntraj <- 5
 out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
 # create ID for the replicate
 # replicate - smoothingFactor - beta
@@ -345,7 +345,7 @@ for(i in 1:length(movePenalties)){
   transDat <- createTransDat(cells, landscape_smooth, betas_l, movePen)
   transDat$num <- 0
   # doParallel routine
-  for(k in 1:ntraj){
+  for(k in 1:1){
     out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
     # create ID for the replicate
     # replicate - smoothingFactor - beta
@@ -380,7 +380,7 @@ for(i in 1:length(movePenalties)){
     
     # make x and y column
     out.dat$x = out.dat$cell %% ncol
-    out.dat$y = out.dat$cell/ncol
+    out.dat$y = ceiling(out.dat$cell/ncol)
     out.dat$t = as.POSIXct(out.dat$t)
     trk <- make_track(as_tibble(out.dat), .x = x,
                       .y = y,
