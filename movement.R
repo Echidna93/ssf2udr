@@ -7,16 +7,29 @@ library(ggplot2)
 library(doParallel) # for running foreach in parallel
 library(MASS) # for mvrnorm
 library(survival) # for clogit
-#' initiates a landscape matrix of vectors of random 0's and 1's
+#' initiates a continous landscape matrix with habitat values between 0 and 1
 #' @param nrow number of rows in matrix
 #' @param ncol number of columns in matrix
 #' @export
 makeLandscapeMatrix <- function(nrow, ncol, binary=TRUE){
-  #matrix(runif(nrow*ncol, 0, 1), ncol = ncol, nrow = nrow)
+  matrix(runif(nrow*ncol, 0, 1), ncol = ncol, nrow = nrow)
+}
+#' initiates a continuous landscape matrix with increasing habitat values
+#' (from left to right) between zero and one
+#' @param nrow number of rows in matrix
+#' @param ncol number of columns in matrix
+#' @export
+makeLandscapeMatrixIncreasing <- function(nrow, ncol, binary=TRUE){
+  # make landscape of size nrow*ncol with values of 0
   m <- matrix(sample(0, nrow*ncol, replace = TRUE), nrow = nrow, ncol = ncol)
-  m[1:ncell(m)/2] <- 0.5
+  j <- 1 # iterator
+  for(i in seq(50,2450, by = 50)){
+    m[(i + 1):(i+50)] <- j * 0.02
+    j <- j + 1
+  }
   m
 }
+
 
 #' Chooses best possible landscape component to move to
 #' TODO alter in the case of an makeDecision being fed an empty list, make 
@@ -29,12 +42,11 @@ makeDecision<-function(landscape, betas_l, cell,
                        drctnlPers){
   # TODO check out sample int
   prob <- transition_prob[cell,] # grab row of transDat
-  # check previous direction for drctnl persistance
+  # # check previous direction for drctnl persistance
   # prob[,drctnPrev] <- if_else(drctnPrev!='stay',
   #                                  drctnlPers*prob[,drctnPrev],
   #                                  prob[,drctnPrev])
   selection <- sample(c(2:6), 1, prob = prob[,3:7])
-  # selection <- selection + 1 # add one so we don't get the cell reference
   drctn <- colnames(cells)[selection]
   if(drctn == "stay"){
     modVec <- list(ymod = 0, xmod = 0)
@@ -45,7 +57,7 @@ makeDecision<-function(landscape, betas_l, cell,
     modVec <- list(ymod = 0, xmod = mods[cell, selection]) 
   }
 
-  c(cell = cells[cell, selection], modVec, drctnPrev)
+  c(cell = cells[cell, selection], modVec, drctnPrev = drctn)
 }
 
 #' Chooses best possible landscape component to move to
@@ -299,17 +311,11 @@ getBadRows <- function(cols, ncol){
   return(unique(which(cols$y < 1 | cols$y > ncol | cols$x < 1 | cols$x > ncol)))
 }
 
-# wrapper around extract covariates
-# takes in a list of indicies with points that fall outside
-# and coerces them back into the domain
-projectPoints <- function(pts){
-  
-}
 
 # CONSTANTS --------------------------------------------------------------------
 
-nrow <- 50
-ncol <- 50
+nrow <- 10
+ncol <- 10
 betaOne <- c(2, 2.5, 3, 3.5)
 movePenalties <- c(0,0.25, 0.5, 1)
 thinVals <- c(100, 150, 200, 250) # number of samples to throw out before writing
@@ -320,8 +326,8 @@ startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
 smoothingFactorL <- c(1,3,5,7)
 nreps = 100
 ntraj <- 10
-lvars <- 4
-nburnin <- 10000
+lvars <- 3
+nburnin <- 100
 drctnlPers <- 2
 drctnPrev <- 'stay'
 out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
@@ -338,7 +344,7 @@ names(metaDat) <- c("rep",
                     "beta", # beta1 is the assigned coeff
                     "slctnCoff", # selection coeff is the retrieved from regression
                     "sl_obs", 
-                    "smoothngFctr",
+                   "smoothngFctr",
                     "sl_",
                     "shape",
                     "scale",
@@ -352,6 +358,8 @@ landscape <- makeLandscapeMatrix(nrow, ncol, TRUE)
 cells <- getSteps(nrow, ncol, landscape)
 mods <- getMods(nrow, ncol, landscape)
 
+xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 2))
+names(xyTrackDat) <- c("x", "y")
 # set up file directory
 path <- "./data/output" # main file path
 # make the domain dir
@@ -367,30 +375,30 @@ path <- paste0(path, "/", domName)
 # SIMULATION -------------------------------------------------------------------
 for(h in 1:1){
   if(h == 1){
-    betaOne <- c(0)
+    betaOne <- c(1,2,3)
     movePenalties <- rep(0, lvars)
-    smoothingFactorL <- rep(1, lvars)
+    smoothingFactorL <- rep(3, lvars)
     thinVals <- rep(100, lvars)
   }
   else if(h == 2){
     betaOne <- rep(0, lvars)
-    movePenalties <- c(0.5, 0.25, 0.5, 1)
+    movePenalties <- c(0.5, 0.25, 1)
     smoothingFactorL <- rep(3, lvars)
     thinVals <- rep(150, lvars)
   }
   else if(h == 3){
     betaOne <- rep(0.5, lvars)
     movePenalties <- rep(0, lvars)
-    smoothingFactorL <- c(1,3,5,7)
+    smoothingFactorL <- c(1,3,5)
     thinVals <- rep(150, lvars)
   }
   else if(h == 4){
     betaOne <- rep(0.5, lvars)
     movePenalties <- rep(0, lvars)
     smoothingFactorL <- rep(3, lvars)
-    thinVals <- rep(100, 150, 200, 250)
+    thinVals <- rep(100, 150, 200)
   }
-for(i in 1:1){
+for(i in 1:lvars){
   smoothingFactor <- smoothingFactorL[i] 
   movePen <- movePenalties[i] 
   theta <- betaOne[i]
@@ -406,9 +414,7 @@ for(i in 1:1){
   transDat$num <- 0
   # doParallel routine
   # k is the number of trajectories
-  for(k in 1:(nrow*ncol)){
-    print(k)
-    nThin <- sample(c(10, 50, 100), 1, replace = TRUE)
+  for(k in 1:15){
     out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
     # create ID for the replicate
     # replicate - smoothingFactor - beta
@@ -416,20 +422,50 @@ for(i in 1:1){
                         "cell",
                         "xMod",
                         "yMod")
+    # out.dat[1,]$cell <- sample()
+    out.dat[1,]$t <- 1
     # metaDat holds data on regression
     currTime <- startTime
     sampIter <- 1
     xmod <- 0 # x-mod and y mod need reset for each simulation
     ymod <- 0
+    cell <- sample(1:ncell(landscape_smooth), 1, replace = TRUE)
     # for randomly sampling the landscape--testing only
-    # loc <- data.frame(cell = sample(1:ncell(landscape_smooth), 1, replace = TRUE), ymod = 0, xmod = 0)
+    loc <- data.frame(cell = cell, ymod = 0, xmod = 0)
     # iteratively stepping thru landscape
-    loc <- data.frame(cell = k, ymod = 0, xmod = 0)
+    # loc <- data.frame(cell = k, ymod = 0, xmod = 0)
+    
+    # reset xyTrackDat
+    xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 3))
+    names(xyTrackDat) <- c("x", "y", "t")
+    
+    # get init location
+    xyTrackDat[1,]$x = if_else(k %% ncol != 0, ceiling(k/ncol), ncol)
+    xyTrackDat[1,]$y = if_else(cell %% ncol != 0, cell %% ncol, ncol)
+    xyTrackDat[1,]$t <- 1
     transDat[k,]$num <- transDat[k,]$num + 1
-    for(iter in 1:(nrow*ncol)){
-      loc <- makeDecision(landscape_smooth, theta, loc$cell, cells, mods, transDat,
-                          drctnPrev, drctnlPers)
-      drctnPrev <- loc$drctnPrev
+    for(iter in 1:(3000)){
+     if(drctnPrev == "stay"){
+       xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x
+       xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y
+      }
+      else if(drctnPrev == "left"){
+        xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x - 1
+        xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y
+      }
+      else if(drctnPrev == "right"){
+        xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x + 1
+        xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y
+      }
+      else if(drctnPrev == "up"){
+        xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x
+        xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y - 1
+      }
+      else if(drctnPrev == "down"){
+        xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x
+        xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y + 1
+      }
+      
       xmod <- xmod + loc$xmod # one of mods is always zero
       ymod <- ymod + loc$ymod
       currTime <- as.POSIXct(currTime) + lubridate::minutes(1)
@@ -444,46 +480,45 @@ for(i in 1:1){
         xMod = xmod, # keeps track of the number of times agent has passed the x-axis
         yMod = ymod  # keeps track of the number of times agent has passed the y-axis
         ))
+      xyTrackDat[iter + 1, ]$t <- currTime # update time
     }
     # ANALYSIS ---------------------------------------------------------------------
-    # out.dat <- out.dat[nburnin:nrow(out.dat),]
     
-    # thin the movement dataset   
-    # out.dat <- out.dat[seq(1:nrow(out.dat)) %% nThin == 0,]   
-
-    # make x and y column
+    # thin the movement dataset
+    ## remove burnin
+    xyTrackDat <- xyTrackDat[nburnin:nrow(xyTrackDat),]
+    # ## remove every nth sample
+    out.dat <- out.dat[seq(1:nrow(out.dat)) %% nThin == 0,]   
+    xyTrackDat2 <- xyTrackDat
+    xyTrackDat <- xyTrackDat[seq(1:nrow(xyTrackDat)) %% nThin == 0,]  
+    # project cells to e-space
     out.dat$x = if_else(out.dat$cell %% ncol != 0, out.dat$cell %% ncol, ncol)
     out.dat$y = if_else(out.dat$cell %% ncol != 0, ceiling(out.dat$cell/ncol), ceiling(out.dat$cell / ncol))
-    out.dat$t = as.POSIXct(out.dat$t)
+    out.dat$t = as.POSIXct(out.dat$t) # change time to type POSIXct
 
-    trk <- make_track(as_tibble(out.dat), .x = x,
+    trk <- make_track(as_tibble(xyTrackDat), .x = x,
                        .y = y,
                        .t = t) 
-    stps  <- steps(trk) # %>% random_steps(n_control = 30)
-    sl_obs <- stps$sl_
+    stps  <- steps(trk) %>% random_steps(n_control = 30)
     stps <- random_steps(stps, n_control = 30)
-    # # 
-    # # # round the decimal places off
-    # # # clamp values to size
-    stps[which(!stps$case_),]$x2_ <- ceiling(stps[which(!stps$case_),]$x2_ %% ncol) # row
-    stps[which(!stps$case_),]$y2_ <- ceiling(stps[which(!stps$case_),]$y2_ %% ncol) # row
+    
+    # fit ISSF
+    # 
+    # print(mod.surv)
+    stps$x2_ <- stps$x2_ %% ncol # row
+    stps$y2_ <- stps$y2_ %% ncol # row
+    stps$x1_ <- stps$x1_ %% ncol # row
+    stps$y1_ <- stps$y1_ %% ncol # row
 
-    # # # extract landscape values
     stps <- stps %>% amt::extract_covariates(rast(landscape_smooth))
-    # 
-    # # remove incomplete strata
-    # # randStps <- randStps %>% amt::remove_incomplete_strata() # might not need this?
-    # # add integer to avoid sl of zero
-    # # stps$sl_ <- stps$sl_ + 1
-    # 
+    
     stps <- stps %>% mutate(sl_ = sl_ + 1,
                             log_sl_ = log(sl_),
                             land = lyr.1)
-
-    # fit ISSF
-    # mod <- amt::fit_issf(stps, case_ ~ log_sl_ + sl_ + land + strata(step_id_))
-    # print(mod.surv)
     
+    hist(landscape_smooth[cbind(stps[which(stps$case_),]$x1_, stps[which(stps$case_),]$y1_)])
+    mod <- amt::fit_issf(stps, case_ ~ log_sl_ + sl_ + land + strata(step_id_))
+    print(mod$model$coefficients[3])
     # Below thins the trajectories exclude trajectories that cross the boundary
     # out.dat$xMod <- if_else(is.na(out.dat$xMod), 0, out.dat$xMod)
     # out.dat$yMod <- if_else(is.na(out.dat$yMod), 0, out.dat$yMod)
@@ -519,7 +554,7 @@ for(i in 1:1){
       slctnCoff = unlist(mod$model$coefficients[3]), # grab LS regression coefficient
       var_slctn = unlist(vcov(mod$model)[3,3]), # grab variance
       sl_ = unlist(mod$model$coefficients['sl_']),
-      sl_obs = sl_obs, 
+      sl_obs = 1, 
       scale = scale, # grab variance
       shape = shape,
       var_log_sl_ = unlist(vcov(mod$model)[1,1]), # grab variance
@@ -561,7 +596,7 @@ trk <- make_track(as_tibble(out.dat.filter), .x = x,
 plot(rast(landscape_smooth), xlim = c(1,ncol-1), ylim = c(1,nrow-1),
      col = gray.colors(10, start = 0.3, end = 0.9, gamma = 2.2,
                        alpha = NULL))
-lines(trk, col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
+lines(xyTrackDat, col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
 #points(trk[which(trk$case_ == FALSE),],col = "yellow", lwd=1, xlim = c(0,50), ylim=c(0,50))
 
 

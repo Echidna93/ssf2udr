@@ -17,9 +17,9 @@ library(amt)
 library(dplyr)
 library(tidyr)
 library(ggplot2)
-library(doParallel) # for running foreach in parallel
+#library(doParallel) # for running foreach in parallel
 library(MASS) # for mvrnorm
-library(rbbt)
+# library(rbbt)
 ```
 ```{r functions, echo=FALSE}
 #' initiates a landscape matrix of vectors of random 0's and 1's
@@ -422,6 +422,7 @@ for(i in 1:lenvars){
         yMod = ymod  # keeps track of the number of times agent has passed the y-axis
       ))
     }
+    
     # ANALYSIS ---------------------------------------------------------------------
     
     # thin the movement dataset   
