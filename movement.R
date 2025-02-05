@@ -443,25 +443,30 @@ for(i in 1:lvars){
     xyTrackDat[1,]$x = if_else(k %% ncol != 0, ceiling(k/ncol), ncol)
     xyTrackDat[1,]$y = if_else(cell %% ncol != 0, cell %% ncol, ncol)
     xyTrackDat[1,]$t <- 1
-    transDat[k,]$num <- transDat[k,]$num + 1
+    # transDat[k,]$num <- transDat[k,]$num + 1
     for(iter in 1:(3000)){
-     if(drctnPrev == "stay"){
+    
+    #loc <- makeDecision(landscape_smooth, betas_l, loc$cell, cells, mods, transDat)
+    
+    
+    
+     if(loc$drctnPrev == "stay"){
        xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x
        xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y
       }
-      else if(drctnPrev == "left"){
+      else if(loc$drctnPrev == "left"){
         xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x - 1
         xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y
       }
-      else if(drctnPrev == "right"){
+      else if(loc$drctnPrev == "right"){
         xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x + 1
         xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y
       }
-      else if(drctnPrev == "up"){
+      else if(loc$drctnPrev == "up"){
         xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x
         xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y - 1
       }
-      else if(drctnPrev == "down"){
+      else if(loc$drctnPrev == "down"){
         xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x
         xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y + 1
       }
@@ -472,14 +477,7 @@ for(i in 1:lvars){
       # for main sim
       # transDat[loc$cell,]$num <- if_else(iter >= nburnin, transDat[loc$cell,]$num + 1,
       #                                    transDat[loc$cell,]$num)
-      
       transDat[loc$cell,]$num <- transDat[loc$cell,]$num + 1
-      out.dat <- rbind(out.dat, cbind(
-        t = currTime,
-        cell = loc$cell,
-        xMod = xmod, # keeps track of the number of times agent has passed the x-axis
-        yMod = ymod  # keeps track of the number of times agent has passed the y-axis
-        ))
       xyTrackDat[iter + 1, ]$t <- currTime # update time
     }
     # ANALYSIS ---------------------------------------------------------------------
@@ -519,28 +517,6 @@ for(i in 1:lvars){
     hist(landscape_smooth[cbind(stps[which(stps$case_),]$x1_, stps[which(stps$case_),]$y1_)])
     mod <- amt::fit_issf(stps, case_ ~ log_sl_ + sl_ + land + strata(step_id_))
     print(mod$model$coefficients[3])
-    # Below thins the trajectories exclude trajectories that cross the boundary
-    # out.dat$xMod <- if_else(is.na(out.dat$xMod), 0, out.dat$xMod)
-    # out.dat$yMod <- if_else(is.na(out.dat$yMod), 0, out.dat$yMod)
-    # 
-    # # create lagged vector for previous statement
-    # out.dat$xModPrev <- data.table::shift(out.dat$xMod, 1, fill = 0)
-    # out.dat$yModPrev <- data.table::shift(out.dat$yMod, 1, fill = 0)
-    # # filter out points where xModPrev doesn't equal xMod
-    # out.dat.filter <- out.dat %>% filter(xModPrev == xMod, yModPrev == yMod)
-    # 
-    # trk <- make_track(as_tibble(out.dat), .x = x,
-    #                   .y = y,
-    #                   .t = t)
-    # plot(rast(landscape_smooth), xlim = c(1,ncol), ylim = c(1,nrow),
-    #      col = gray.colors(10, start = 0.3, end = 0.9, gamma = 2.2,
-    #                        alpha = NULL))
-    # lines(make_track(as_tibble(out.dat.filter), .x = y, .y = x, .t = t),
-    #       col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
-    # 
-    # 
-    #print(mod$model$coefficients[3])
-    
     # grab sl_ and log_sl_ distr
     norms <- mvrnorm(ntraj, cbind(mod$model$coefficients['log_sl_'],
                                   mod$model$coefficients['sl_']),
