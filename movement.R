@@ -309,6 +309,14 @@ squishToSize <- function(dir){
   }
   return(dir)
 }
+checkTrackUD <- function(track){
+  mat <- matrix(0, nrow = nrow, ncol = ncol)
+  #realSteps <- cbind(track$x, track$y)
+  for(i in 1:nrow(track)){
+    mat[track[i,]$x, track[i,]$y] <- mat[track[i,]$x, track[i,]$y] + 1
+  }
+  return(mat)
+}
 # CONSTANTS --------------------------------------------------------------------
 
 nrow <- 50
@@ -324,7 +332,8 @@ smoothingFactorL <- c(1,3,5,7)
 nreps = 100
 ntraj <- 10
 lvars <- 3
-nburnin <- 2500
+sigmaSqEta <- 0.2
+nburnin <- 10000
 drctnlPers <- 2
 drctnPrev <- 'stay'
 out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
@@ -372,8 +381,8 @@ path <- paste0(path, "/", domName)
 # SIMULATION -------------------------------------------------------------------
 for(h in 1:1){
   if(h == 1){
-    betaOne <- c(1,2,3)
-    movePenalties <- rep(0, lvars)
+    betaOne <- c(0,3,5)
+    movePenalties <- rep(0.25, lvars)
     smoothingFactorL <- rep(3, lvars)
     thinVals <- rep(100, lvars)
   }
@@ -395,11 +404,12 @@ for(h in 1:1){
     smoothingFactorL <- rep(3, lvars)
     thinVals <- rep(100, 150, 200)
   }
-for(i in 1:lvars){
-  smoothingFactor <- smoothingFactorL[i] 
-  movePen <- movePenalties[i] 
-  theta <- betaOne[i]
-  nThin <- thinVals[i] # grab thinning value for this iteration
+for(i in 1:100){
+  p <- sample(c(1:lvars), 1, replace = TRUE)
+  smoothingFactor <- smoothingFactorL[p] 
+  movePen <- movePenalties[p] 
+  theta <- betaOne[p]
+  nThin <- thinVals[p] # grab thinning value for this iteration
   print(theta)
   if(smoothingFactor == 1){
     landscape_smooth <- landscape
@@ -407,28 +417,31 @@ for(i in 1:lvars){
     pad <- createPaddedMatrix(landscape, smoothingFactor)
     landscape_smooth <- smooth_pad_terra(pad, smoothingFactor, landscape)
   }
-  for(k in 1:10){
+  for(k in 1:1){
     # reset xyTrackDat
     xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 3))
     names(xyTrackDat) <- c("x", "y", "t")
+    startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
     
     # get init location
     xyTrackDat[1,]$x = x.init
     xyTrackDat[1,]$y = y.init
-    xyTrackDat[1,]$t <- 1
+    xyTrackDat[1,]$t <- startTime
     
-    up.x <- xyTrackDat[1,]$x
-    up.y <- xyTrackDat[1,]$y - 1
-    left.x <- xyTrackDat[1,]$x - 1
-    left.y <- xyTrackDat[1,]$y
-    right.x <- xyTrackDat[1,]$x + 1
-    right.y <- xyTrackDat[1,]$y 
-    down.x <- xyTrackDat[1,]$x
-    down.y <- xyTrackDat[1,]$y + 1
+    up.x <- xyTrackDat[1,]$x - 1
+    up.y <- xyTrackDat[1,]$y 
+    left.x <- xyTrackDat[1,]$x 
+    left.y <- xyTrackDat[1,]$y - 1
+    right.x <- xyTrackDat[1,]$x
+    right.y <- xyTrackDat[1,]$y + 1 
+    down.x <- xyTrackDat[1,]$x + 1
+    down.y <- xyTrackDat[1,]$y  
     stay.x <- xyTrackDat[1,]$x
     stay.y <- xyTrackDat[1,]$y
-    for(iter in 1:(10000)){
+    
+    for(iter in 1:(20000)){
       # make decision
+      currTime <- startTime
       up.x <- squishToSize(up.x)
       up.y <- squishToSize(up.y)
       down.x <- squishToSize(down.x)
@@ -459,18 +472,20 @@ for(i in 1:lvars){
                 'stay' = list('x' = stay.x, 'y' = stay.y))
       
       decision <- sample(c(1:5), 1, weights, replace = TRUE)
-      
+      # print(decision)
+      # print(weights)
+      # print()
       xyTrackDat[iter + 1, ]$x <- locs[[decision]]$x
       xyTrackDat[iter + 1, ]$y <- locs[[decision]]$y
       # grab new directions
-      up.x <- xyTrackDat[iter + 1,]$x
-      up.y <- xyTrackDat[iter + 1,]$y - 1
-      left.x <- xyTrackDat[iter + 1,]$x - 1
-      left.y <- xyTrackDat[iter + 1,]$y
-      right.x <- xyTrackDat[iter + 1,]$x + 1
-      right.y <- xyTrackDat[iter + 1,]$y 
-      down.x <- xyTrackDat[iter + 1,]$x
-      down.y <- xyTrackDat[iter + 1,]$y + 1
+      up.x <- xyTrackDat[iter + 1,]$x - 1
+      up.y <- xyTrackDat[iter + 1,]$y 
+      left.x <- xyTrackDat[iter + 1,]$x 
+      left.y <- xyTrackDat[iter + 1,]$y - 1
+      right.x <- xyTrackDat[iter + 1,]$x
+      right.y <- xyTrackDat[iter + 1,]$y + 1 
+      down.x <- xyTrackDat[iter + 1,]$x + 1
+      down.y <- xyTrackDat[iter + 1,]$y  
       stay.x <- xyTrackDat[iter + 1,]$x
       stay.y <- xyTrackDat[iter + 1,]$y
       
@@ -496,6 +511,10 @@ for(i in 1:lvars){
     trk <- make_track(as_tibble(xyTrackDat), .x = x,
                        .y = y,
                        .t = t) 
+    # add gaussian noise
+    trk$x_ <- trk$x_ + rnorm(nrow(trk), 0, sigmaSqEta)
+    trk$y_ <- trk$y_ + rnorm(nrow(trk), 0, sigmaSqEta)
+    
     stps  <- steps(trk) %>% random_steps(n_control = 30)
     # fit ISSF
     # 
@@ -504,11 +523,10 @@ for(i in 1:lvars){
     stps$y2_ <- stps$y2_ %% ncol # row
     stps$x1_ <- stps$x1_ %% ncol # row
     stps$y1_ <- stps$y1_ %% ncol # row
-
+    
     stps <- stps %>% amt::extract_covariates(rast(landscape_smooth))
     
-    stps <- stps %>% mutate(sl_ = sl_ + 1,
-                            log_sl_ = log(sl_),
+    stps <- stps %>% mutate(log_sl_ = log(sl_),
                             land = lyr.1)
     
     hist(landscape_smooth[cbind(stps[which(stps$case_),]$x1_, stps[which(stps$case_),]$y1_)])
