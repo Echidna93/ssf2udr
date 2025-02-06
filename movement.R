@@ -37,27 +37,12 @@ makeLandscapeMatrixIncreasing <- function(nrow, ncol, binary=TRUE){
 #' TODO implement sorting function
 #' @param 
 #' @export
-makeDecision<-function(landscape, betas_l, cell,
-                       cells, mods, transition_prob, drctnPrev,
-                       drctnlPers){
+makeDecision<-function(weights){
   # TODO check out sample int
-  prob <- transition_prob[cell,] # grab row of transDat
-  # # check previous direction for drctnl persistance
-  # prob[,drctnPrev] <- if_else(drctnPrev!='stay',
-  #                                  drctnlPers*prob[,drctnPrev],
-  #                                  prob[,drctnPrev])
-  selection <- sample(c(2:6), 1, prob = prob[,3:7])
+  prob <- transition_prob[cell,]
+  sample(c(2:6), 1, prob = prob[,3:7])
   drctn <- colnames(cells)[selection]
-  if(drctn == "stay"){
-    modVec <- list(ymod = 0, xmod = 0)
-  }
-  if(drctn == "up" || drctn == "down"){
-    modVec <-  list(ymod = mods[cell, selection], xmod = 0)
-  }else{
-    modVec <- list(ymod = 0, xmod = mods[cell, selection]) 
-  }
-
-  c(cell = cells[cell, selection], modVec, drctnPrev = drctn)
+  direction
 }
 
 #' Chooses best possible landscape component to move to
@@ -80,6 +65,10 @@ generateSteps <- function(smoothingFactor){
   steps %>% unique()
 }
 
+rangeNormalize <- function(land){
+  return((land - min(land))/(max(land) - min(land)))
+}
+
 # smooths by the padded matrix by a factor sf using the terra::focal function
 #' @param pad padded matrix
 #' @param sf smoothing factor; size of focal window
@@ -92,7 +81,7 @@ smooth_pad_terra <- function(pad, sf, land){
   # smooth <- matrix(smooth$focal_mean, nrow = nrow(land), ncol = ncol(land))
   # smooth[smooth > mean(smooth)] <- 1
   # smooth[smooth <= mean(smooth)] <- 0
-  matrix(as.vector(unlist(smooth)), nrow = nrow(land), ncol = ncol(land))
+  rangeNormalize(matrix(as.vector(unlist(smooth)), nrow = nrow(land), ncol = ncol(land)))
   }
 
 # creates a matrix which is padded by 2x the smoothing function 
@@ -311,11 +300,19 @@ getBadRows <- function(cols, ncol){
   return(unique(which(cols$y < 1 | cols$y > ncol | cols$x < 1 | cols$x > ncol)))
 }
 
-
+squishToSize <- function(dir){
+  if(dir > ncol){
+    return(dir - ncol)
+  }
+  else if(dir <= 0){
+    return(dir + ncol)
+  }
+  return(dir)
+}
 # CONSTANTS --------------------------------------------------------------------
 
-nrow <- 10
-ncol <- 10
+nrow <- 50
+ncol <- 50
 betaOne <- c(2, 2.5, 3, 3.5)
 movePenalties <- c(0,0.25, 0.5, 1)
 thinVals <- c(100, 150, 200, 250) # number of samples to throw out before writing
@@ -327,7 +324,7 @@ smoothingFactorL <- c(1,3,5,7)
 nreps = 100
 ntraj <- 10
 lvars <- 3
-nburnin <- 100
+nburnin <- 2500
 drctnlPers <- 2
 drctnPrev <- 'stay'
 out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
@@ -410,69 +407,74 @@ for(i in 1:lvars){
     pad <- createPaddedMatrix(landscape, smoothingFactor)
     landscape_smooth <- smooth_pad_terra(pad, smoothingFactor, landscape)
   }
-  transDat <- createTransDat(cells, landscape_smooth, theta, movePen)
-  transDat$num <- 0
-  # doParallel routine
-  # k is the number of trajectories
-  for(k in 1:15){
-    out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
-    # create ID for the replicate
-    # replicate - smoothingFactor - beta
-    names(out.dat) <- c("t",
-                        "cell",
-                        "xMod",
-                        "yMod")
-    # out.dat[1,]$cell <- sample()
-    out.dat[1,]$t <- 1
-    # metaDat holds data on regression
-    currTime <- startTime
-    sampIter <- 1
-    xmod <- 0 # x-mod and y mod need reset for each simulation
-    ymod <- 0
-    cell <- sample(1:ncell(landscape_smooth), 1, replace = TRUE)
-    # for randomly sampling the landscape--testing only
-    loc <- data.frame(cell = cell, ymod = 0, xmod = 0)
-    # iteratively stepping thru landscape
-    # loc <- data.frame(cell = k, ymod = 0, xmod = 0)
-    
+  for(k in 1:10){
     # reset xyTrackDat
     xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 3))
     names(xyTrackDat) <- c("x", "y", "t")
     
     # get init location
-    xyTrackDat[1,]$x = if_else(k %% ncol != 0, ceiling(k/ncol), ncol)
-    xyTrackDat[1,]$y = if_else(cell %% ncol != 0, cell %% ncol, ncol)
+    xyTrackDat[1,]$x = x.init
+    xyTrackDat[1,]$y = y.init
     xyTrackDat[1,]$t <- 1
-    # transDat[k,]$num <- transDat[k,]$num + 1
-    for(iter in 1:(3000)){
     
-    #loc <- makeDecision(landscape_smooth, betas_l, loc$cell, cells, mods, transDat)
-    
-    
-    
-     if(loc$drctnPrev == "stay"){
-       xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x
-       xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y
-      }
-      else if(loc$drctnPrev == "left"){
-        xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x - 1
-        xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y
-      }
-      else if(loc$drctnPrev == "right"){
-        xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x + 1
-        xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y
-      }
-      else if(loc$drctnPrev == "up"){
-        xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x
-        xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y - 1
-      }
-      else if(loc$drctnPrev == "down"){
-        xyTrackDat[iter+1,]$x = xyTrackDat[iter,]$x
-        xyTrackDat[iter+1,]$y = xyTrackDat[iter,]$y + 1
-      }
+    up.x <- xyTrackDat[1,]$x
+    up.y <- xyTrackDat[1,]$y - 1
+    left.x <- xyTrackDat[1,]$x - 1
+    left.y <- xyTrackDat[1,]$y
+    right.x <- xyTrackDat[1,]$x + 1
+    right.y <- xyTrackDat[1,]$y 
+    down.x <- xyTrackDat[1,]$x
+    down.y <- xyTrackDat[1,]$y + 1
+    stay.x <- xyTrackDat[1,]$x
+    stay.y <- xyTrackDat[1,]$y
+    for(iter in 1:(10000)){
+      # make decision
+      up.x <- squishToSize(up.x)
+      up.y <- squishToSize(up.y)
+      down.x <- squishToSize(down.x)
+      down.y <- squishToSize(down.y)
+      left.x <- squishToSize(left.x)
+      left.y <- squishToSize(left.y)
+      right.x <- squishToSize(right.x)
+      right.y <- squishToSize(right.y)
+      stay.x <- squishToSize(stay.x)
+      stay.y <- squishToSize(stay.y)
       
-      xmod <- xmod + loc$xmod # one of mods is always zero
-      ymod <- ymod + loc$ymod
+      up.val <- landscape_smooth[up.x, up.y]
+      down.val <- landscape_smooth[down.x, down.y]
+      left.val <- landscape_smooth[left.x, left.y]
+      right.val <- landscape_smooth[right.x, right.y]
+      stay.val <- landscape_smooth[stay.x, stay.y]
+      
+      weights <- c(exp(-movePen + (up.val * theta)), # up
+                   exp(-movePen + (down.val * theta)), # down
+                   exp(-movePen + (left.val * theta)), # left
+                   exp(-movePen + (right.val * theta)), # right
+                   exp(0 + (stay.val * theta))) # stay
+      
+      locs <- list('up' = list("x" = up.x, "y" = up.y),
+                'down' = list('x' = down.x, 'y' = down.y),
+                'left' = list('x' = left.x, 'y' = left.y),
+                'right' = list('x' = right.x, 'y' = right.y),
+                'stay' = list('x' = stay.x, 'y' = stay.y))
+      
+      decision <- sample(c(1:5), 1, weights, replace = TRUE)
+      
+      xyTrackDat[iter + 1, ]$x <- locs[[decision]]$x
+      xyTrackDat[iter + 1, ]$y <- locs[[decision]]$y
+      # grab new directions
+      up.x <- xyTrackDat[iter + 1,]$x
+      up.y <- xyTrackDat[iter + 1,]$y - 1
+      left.x <- xyTrackDat[iter + 1,]$x - 1
+      left.y <- xyTrackDat[iter + 1,]$y
+      right.x <- xyTrackDat[iter + 1,]$x + 1
+      right.y <- xyTrackDat[iter + 1,]$y 
+      down.x <- xyTrackDat[iter + 1,]$x
+      down.y <- xyTrackDat[iter + 1,]$y + 1
+      stay.x <- xyTrackDat[iter + 1,]$x
+      stay.y <- xyTrackDat[iter + 1,]$y
+      
+      
       currTime <- as.POSIXct(currTime) + lubridate::minutes(1)
       # for main sim
       # transDat[loc$cell,]$num <- if_else(iter >= nburnin, transDat[loc$cell,]$num + 1,
@@ -490,16 +492,11 @@ for(i in 1:lvars){
     xyTrackDat2 <- xyTrackDat
     xyTrackDat <- xyTrackDat[seq(1:nrow(xyTrackDat)) %% nThin == 0,]  
     # project cells to e-space
-    out.dat$x = if_else(out.dat$cell %% ncol != 0, out.dat$cell %% ncol, ncol)
-    out.dat$y = if_else(out.dat$cell %% ncol != 0, ceiling(out.dat$cell/ncol), ceiling(out.dat$cell / ncol))
-    out.dat$t = as.POSIXct(out.dat$t) # change time to type POSIXct
-
+    
     trk <- make_track(as_tibble(xyTrackDat), .x = x,
                        .y = y,
                        .t = t) 
     stps  <- steps(trk) %>% random_steps(n_control = 30)
-    stps <- random_steps(stps, n_control = 30)
-    
     # fit ISSF
     # 
     # print(mod.surv)
