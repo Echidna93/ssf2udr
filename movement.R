@@ -131,7 +131,7 @@ names(metaDat) <- c("rep",
                     "movePenalty",
                     "nThin"
 )
-landscape <- makeLandscapeMatrixIncreasing(nrow, ncol, TRUE)
+landscape <- makeLandscapeMatrix(nrow = nrow, ncol = ncol)
 xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 2))
 names(xyTrackDat) <- c("x", "y")
 # set up file directory
@@ -149,10 +149,10 @@ path <- paste0(path, "/", domName)
 # SIMULATION -------------------------------------------------------------------
 for(h in 1:1){
   if(h == 1){
-    betaOne <- rep(2, lvars)
+    betaOne <- rep(8, lvars)
     movePenalties <- rep(0, lvars)
-    smoothingFactorL <- rep(1, lvars)
-    thinVals <- rep(100, lvars)
+    smoothingFactorL <- rep(3, lvars)
+    thinVals <- rep(150, lvars)
   }
   else if(h == 2){
     betaOne <- rep(0, lvars)
@@ -310,9 +310,14 @@ for(i in 1:200){
     
     # REAL TRACK
     ## get sls from real track
-    stps.real <- make_track(as_tibble(xyTrackDat), .x = x.real,
+    trk.real <- make_track(as_tibble(xyTrackDat), .x = x.real,
                        .y = y.real,
-                       .t = t) %>% steps() 
+                       .t = t) 
+    
+    trk.real$x_ <- trk.real$x_ + rnorm(nrow(trk.real), 0, sigmaSqEta)
+    trk.real$y_ <- trk.real$y_ + rnorm(nrow(trk.real), 0, sigmaSqEta)
+    
+    stps.real <- trk.real %>% steps() 
     
     
     # PROJECTED TRACK
