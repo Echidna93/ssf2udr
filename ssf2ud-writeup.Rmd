@@ -9,7 +9,7 @@ output:
 bibliography: SSF2UD.json #https://www.zotero.org/styleshttps://www.zotero.org/styles
 csl: ecology.csl 
 ---
-```{r load packages, echo = FALSE}
+```{r load packages, echo = FALSE, eval = FALSE}
 library(terra)
 library(raster) # for ncell function
 library(amt)
@@ -470,7 +470,7 @@ ggplot(metaDat, aes(y = unlist(slctnCoff), x = unlist(smoothingFctr), color = fa
 ```
 
 ## METHODS
-We simulated telemetry data for an agent across a `r I(nrow)` by `r I(ncol)` domain. The agent was directed to select across a gradient of continuous habitat values ranging from zero to one (Figure 1). Each landscape was smoothed by first padding the original domain (Figure 1) by some smoothing factor (n.b., an odd-numbered integer between `r I(min(smoothingFactorL))` and `r I(max(smoothingFactorL))``; Figure 2).
+To ascertain relationships between step_length, selection and landscape configuration we simulated telemetry data for an agent across a `r I(nrow)` by `r I(ncol)` domain of continuous habitat (ranging from 0 to 1; Figure 1).
 
 ### Landscape
 To smooth the landscape we first padded the `r I(nrow)` by `r I(ncol)` domain by two times the smoothing factor on each side with cells side from the opposite side of the domain. We then utilized the smoothing function *focal* from the R-package *terra* to take the average of the cells within a square moving window with size of the smoothing factor @hijmans_terraSpatialData2024. For example with a smoothing factor of 3, 6 columns or rows of cells from the opposite side were attached to the corresponding side. These cells were then averaged over a square with of size 3 (i.e., an area of 9 $units^2$). After smoothing the domain was cropped back to it's original size by removing the padded values.
@@ -481,7 +481,7 @@ For a given cell, $c$, the agent was programmed to only move to a cells within o
 $$
 p(c_{n}) \ = \ e^{-p + \theta(c_n)} \ (1)
 $$
-Above equation 1 gives the transition probability between the cell $c$ and a neighboring cell $c_n$. This is given by the exponential of the sum of the movement penalty $p$ and the preference of the agent $\theta$ for the neighboring cell $c_n$ (n.b., for the case of staying in the same cell $p = 0$). The values $p$ and $theta$ were scholastically updated throughout the simulation to examine relationships between movement penalty ($p$), and preference $\theta$.
+Equation 1 gives the transition probability between the cell $c$ and a neighboring cell $c_n$. This is given by the exponential of the sum of the movement penalty $p$ (n.b., for the case of staying in the same cell $p = 0$) and the preference of the agent $\theta$ for the neighboring cell $c_n$. The values $p$ and $\theta$ were scholastically updated throughout the simulation to examine relationships between movement penalty ($p$), and preference $\theta$.
 
 Since we wanted to simulate movement on a torus we utilized a mixture modular arithmetic and subtraction to ensure that if the agent left the original `r I(nrow)` by `r I(ncol)` domain that it ended it's step back inside the domain. For example if the agent started at position [1,1] we would add or subtract the size of the domain (depending upon whether the step was smaller or larger than allowed within the domain) to project the agent back in (Figure 3).
 
@@ -491,6 +491,6 @@ To retrieve the downstream selection coefficient for a given habitat type $t$ th
 
 ![Figure 1. An image of an unsmoothed `r I(nrow)` by `r I(ncol)` domain.](./data/output/figures/land.png)
 
-![Figure 2. An image of a `r I(nrow)` by `r I(ncol)` domain smoothed by a factor of `r 3`.](./data/output/figures/land_smooth.png)
+![Figure 2. An image of a `r I(nrow)` by `r I(ncol)` domain smoothed by a factor of 3.](./data/output/figures/land_smooth.png)
 
 ![Figure 3. An image of an `r I(nrow)` by `r I(ncol)` domain with possible steps (red) the agent could take from the first cell (blue).](./data/output/figures/land-possible-steps.png)
