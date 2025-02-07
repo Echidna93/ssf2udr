@@ -23,46 +23,11 @@ makeLandscapeMatrixIncreasing <- function(nrow, ncol, binary=TRUE){
   # make landscape of size nrow*ncol with values of 0
   m <- matrix(sample(0, nrow*ncol, replace = TRUE), nrow = nrow, ncol = ncol)
   j <- 1 # iterator
-  for(i in seq(50,2450, by = 50)){
-    m[(i + 1):(i+50)] <- j * 0.02
+  for(i in seq(ncol,((ncol*nrow) - ncol), by = ncol)){
+    m[(i + 1):(i+ncol)] <- j * 0.02
     j <- j + 1
   }
   m
-}
-
-
-#' Chooses best possible landscape component to move to
-#' TODO alter in the case of an makeDecision being fed an empty list, make 
-#' else case
-#' TODO implement sorting function
-#' @param 
-#' @export
-makeDecision<-function(weights){
-  # TODO check out sample int
-  prob <- transition_prob[cell,]
-  sample(c(2:6), 1, prob = prob[,3:7])
-  drctn <- colnames(cells)[selection]
-  direction
-}
-
-#' Chooses best possible landscape component to move to
-#' TODO alter in the case of an makeDecision being fed an empty list, make 
-#' else case
-#' TODO implement sorting function
-#' @param landscape matrix to smooth
-#' @param smoothingFactor size of moving window to smooth
-#' @export
-generateSteps <- function(smoothingFactor){
-  steps <- seq(from = -1, to = 1, by = 1)
-  smooth <- seq(1, smoothingFactor, by = 1)
-  steps <- expand.grid(steps, steps) %>% as.data.frame() %>% dplyr::rename(x = Var1, y = Var2) %>% filter(x != -y) %>% filter(x != y)
-  steps <- rbind(c(0,0),steps)
-  for(i in 1:nrow(steps)){
-    for(k in 1:length(smooth)){
-      steps <- rbind(steps, smooth[k] * steps[i,])
-    }
-  }
-  steps %>% unique()
 }
 
 rangeNormalize <- function(land){
@@ -111,195 +76,6 @@ createPaddedMatrix <- function(land, sf){
   pad_land
 }
 
-# getMods creates a dataframe that tracks when each step 
-# leaves the original domain
-#' @param nrow number of rows
-#' @param ncol number of columns
-#' @param landscape matrix to smooth
-#' @export
-getMods <- function(nrow, ncol, landscape){
-  cells <- data.frame(cell = 1:ncell(landscape), stay = 0,
-                      right = 0, left = 0, up = 0, down = 0)
-  for(i in 1:nrow(cells)){
-    # top left
-    if(i == 1){
-      cells[i,]$left <- -1
-      cells[i,]$up <- 1
-      cells[i,]$down <- 0
-      cells[i,]$right <- 0
-    }
-    # bottom left
-    else if(i == ncol){
-      cells[i,]$left <- -1
-      cells[i,]$up <- 0
-      cells[i,]$down <- 1
-      cells[i,]$right <- 0
-    }
-    # bottom right
-    else if(i == ncol*nrow){
-      cells[i,]$left <- 0
-      cells[i,]$up <- 0
-      cells[i,]$down <- 1
-      cells[i,]$right <- 1
-    }
-    # top right
-    else if(i == (nrow*ncol - ncol) + 1){
-      cells[i,]$left <- 0 
-      cells[i,]$up <- -1
-      cells[i,]$down <- 0
-      cells[i,]$right <- 1
-    }
-    # bottom row
-    else if(i %% nrow == 0 & (i != ncol & i != ncol*nrow)){
-      cells[i,]$left <-  0
-      cells[i,]$up <- 0
-      cells[i,]$down <- 1
-      cells[i,]$right <- 0
-    }
-    # right edge
-    else if((i > (nrow * ncol - ncol) + 1) & (i < nrow*ncol)){
-      cells[i,]$left <- 0
-      cells[i,]$up <- 0
-      cells[i,]$down <- 0
-      cells[i,]$right <- 1
-    }
-    # left edge
-    else if((i > 1) & (i < ncol)){
-      cells[i,]$left <- -1
-      cells[i,]$up <- 0
-      cells[i,]$down <- 0
-      cells[i,]$right <- 0
-    }
-    # top edge
-    else if((i %% nrow == 1) & (i != 1 & i != (nrow*ncol - ncol) + 1)){
-      cells[i,]$left <- 0
-      cells[i,]$up <- -1
-      cells[i,]$down <- 0
-      cells[i,]$right <- 0
-    }
-    else{
-      cells[i,]$left <- 0
-      cells[i,]$up <- 0 
-      cells[i,]$down <- 0
-      cells[i,]$right <- 0
-    }
-  }
-  return(cells)
-}
-
-# getSteps creates a dataframe that tracks the index (cell) of the next 
-# step for each cell in the domain
-#' @param nrow number of rows
-#' @param ncol number of columns
-#' @param land matrix to smooth
-#' @export
-getSteps <- function(nrow, ncol, land){
-  cells <- data.frame(cell = 1:ncell(land), stay = 1:ncell(land),
-                      right = 0, left = 0, up = 0, down = 0)
-  for(i in 1:nrow(cells)){
-    # top left
-    if(i == 1){
-      cells[i,]$left <- (ncol*nrow - ncol) + 1
-      cells[i,]$up <- ncol
-      cells[i,]$down <- i + 1
-      cells[i,]$right <- i + ncol
-    }
-    # bottom left
-    else if(i == ncol){
-      cells[i,]$left <- ncol * nrow
-      cells[i,]$up <- i - 1
-      cells[i,]$down <- 1
-      cells[i,]$right <- i + ncol
-    }
-    # bottom right
-    else if(i == ncol*nrow){
-      cells[i,]$left <- i - ncol
-      cells[i,]$up <- i - 1
-      cells[i,]$down <- ncol*nrow - ncol + 1
-      cells[i,]$right <- ncol
-    }
-    # top right
-    else if(i == (nrow*ncol - ncol) + 1){
-      cells[i,]$left <- i - nrow 
-      cells[i,]$up <- ncol*nrow
-      cells[i,]$down <- i + 1
-      cells[i,]$right <- 1
-    }
-    # bottom edge
-    else if(i %% nrow == 0 & (i != ncol & i != ncol*nrow)){
-      cells[i,]$left <-  i - nrow
-      cells[i,]$up <- i - 1
-      cells[i,]$down <- i - ncol + 1
-      cells[i,]$right <- i + nrow
-    }
-    # right edge
-    else if((i > (nrow * ncol - ncol) + 1) & (i < nrow*ncol)){
-      cells[i,]$left <- i - nrow
-      cells[i,]$up <- i - 1
-      cells[i,]$down <- i + 1
-      cells[i,]$right <- i %% ncol
-    }
-    # left edge
-    else if((i > 1) & (i < ncol)){
-      cells[i,]$left <- (ncol*nrow - ncol) + i
-      cells[i,]$up <- i - 1
-      cells[i,]$down <- i + 1
-      cells[i,]$right <- i + ncol
-    }
-    # top edge
-    else if((i %% nrow == 1) & (i != 1 & i != (nrow*ncol - ncol) + 1)){
-      cells[i,]$left <- i - ncol
-      cells[i,]$up <- i + (ncol - 1)
-      cells[i,]$down <- i + 1
-      cells[i,]$right <- i + nrow
-    }
-    else{
-      cells[i,]$left <- i - nrow
-      cells[i,]$up <- i - 1 
-      cells[i,]$down <- i + 1
-      cells[i,]$right <- i + nrow
-      }
-    }
-  return(cells)
-}
-
-# createTransDat creates a dataframe that the probability of movement for 
-# each step on the map
-#' @param cells the dataframe containing the cells # of the possible steps
-#' @param landscape_smooth smoothed domain from smooth_pad_terra
-#' @param betas_l list of beta values for landscape types
-#' @param move_penalty the propensity for the agent to move or not move
-#' @export
-createTransDat <- function(cells, landscape_smooth, theta, move_penalty){
-  transMat <- data.frame(cell = 1:ncell(landscape),num = 0, stay = 0, right = 0, left = 0,
-                         up = 0, down = 0)
-  transMat$stay <- exp(0 + (as.vector(landscape_smooth) * theta))
-  transMat$left <- exp(-move_penalty + (landscape_smooth[cells$left]) * theta)
-  transMat$up <- exp(-move_penalty + (landscape_smooth[cells$up] * theta))
-  transMat$down <- exp(-move_penalty + (landscape_smooth[cells$down] * theta))
-  transMat$right <- exp(-move_penalty + (landscape_smooth[cells$right] * theta))
-  return(transMat)
-}
-createCellDat <- function(cells, landscape_smooth, betas_l, move_penalty){
-  transMat <- data.frame(cell = 1:ncell(landscape),num = 0, stay = 0, right = 0, left = 0,
-                         up = 0, down = 0)
-  transMat$stay <- as.integer(betas_l[as.character(landscape_smooth)])
-  transMat$left <- as.integer(betas_l[as.character(landscape_smooth[cells$left])])
-  transMat$up <- as.integer(betas_l[as.character(landscape_smooth[cells$up])])
-  transMat$down <- as.integer(betas_l[as.character(landscape_smooth[cells$down])])
-  transMat$right <- as.integer(betas_l[as.character(landscape_smooth[cells$right])])
-  return(transMat)
-}
-# helper function for extrat_covariates
-# takes columns of points
-getBadRows <- function(cols, ncol){
-  # coerce cols into dataframe
-  cols <- as.data.frame(cols)
-  names(cols) <- c("x", "y")
-  # check which columns are outside of the range of the matrix
-  return(unique(which(cols$y < 1 | cols$y > ncol | cols$x < 1 | cols$x > ncol)))
-}
-
 squishToSize <- function(dir){
   if(dir > ncol){
     return(dir - ncol)
@@ -321,19 +97,14 @@ checkTrackUD <- function(track){
 
 nrow <- 50
 ncol <- 50
-betaOne <- c(2, 2.5, 3, 3.5)
-movePenalties <- c(0,0.25, 0.5, 1)
-thinVals <- c(100, 150, 200, 250) # number of samples to throw out before writing
-betas_l <- list('0' = 0,
-                '1' = 1)
 nsims <- nrow*ncol
 startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
 smoothingFactorL <- c(1,3,5,7)
 nreps = 100
 ntraj <- 10
-lvars <- 3
+lvars <- 5
 sigmaSqEta <- 0.2
-nburnin <- 10000
+nburnin <- 5000
 drctnlPers <- 2
 drctnPrev <- 'stay'
 out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
@@ -360,10 +131,7 @@ names(metaDat) <- c("rep",
                     "movePenalty",
                     "nThin"
 )
-landscape <- makeLandscapeMatrix(nrow, ncol, TRUE)
-cells <- getSteps(nrow, ncol, landscape)
-mods <- getMods(nrow, ncol, landscape)
-
+landscape <- makeLandscapeMatrixIncreasing(nrow, ncol, TRUE)
 xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 2))
 names(xyTrackDat) <- c("x", "y")
 # set up file directory
@@ -381,9 +149,9 @@ path <- paste0(path, "/", domName)
 # SIMULATION -------------------------------------------------------------------
 for(h in 1:1){
   if(h == 1){
-    betaOne <- c(0,3,5)
-    movePenalties <- rep(0.25, lvars)
-    smoothingFactorL <- rep(3, lvars)
+    betaOne <- rep(2, lvars)
+    movePenalties <- rep(0, lvars)
+    smoothingFactorL <- rep(1, lvars)
     thinVals <- rep(100, lvars)
   }
   else if(h == 2){
@@ -404,7 +172,7 @@ for(h in 1:1){
     smoothingFactorL <- rep(3, lvars)
     thinVals <- rep(100, 150, 200)
   }
-for(i in 1:100){
+for(i in 1:200){
   p <- sample(c(1:lvars), 1, replace = TRUE)
   smoothingFactor <- smoothingFactorL[p] 
   movePen <- movePenalties[p] 
@@ -419,27 +187,43 @@ for(i in 1:100){
   }
   for(k in 1:1){
     # reset xyTrackDat
-    xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 3))
-    names(xyTrackDat) <- c("x", "y", "t")
+    xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 5))
+    names(xyTrackDat) <- c("x.proj", "y.proj","x.real","y.real","t")
     startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
-    
+    x.init <- sample(1:ncol, 1, replace = TRUE)
+    y.init <- sample(1:ncol, 1, replace = TRUE)
     # get init location
-    xyTrackDat[1,]$x = x.init
-    xyTrackDat[1,]$y = y.init
+    xyTrackDat[1,]$x.proj = x.init
+    xyTrackDat[1,]$y.proj = y.init
+    
+    xyTrackDat[1,]$x.real = x.init
+    xyTrackDat[1,]$y.real = y.init
+    
     xyTrackDat[1,]$t <- startTime
     
-    up.x <- xyTrackDat[1,]$x - 1
-    up.y <- xyTrackDat[1,]$y 
-    left.x <- xyTrackDat[1,]$x 
-    left.y <- xyTrackDat[1,]$y - 1
-    right.x <- xyTrackDat[1,]$x
-    right.y <- xyTrackDat[1,]$y + 1 
-    down.x <- xyTrackDat[1,]$x + 1
-    down.y <- xyTrackDat[1,]$y  
-    stay.x <- xyTrackDat[1,]$x
-    stay.y <- xyTrackDat[1,]$y
+    up.x <- xyTrackDat[1,]$x.proj- 1
+    up.y <- xyTrackDat[1,]$y.proj
+    left.x <- xyTrackDat[1,]$x.proj
+    left.y <- xyTrackDat[1,]$y.proj- 1
+    right.x <- xyTrackDat[1,]$x.proj
+    right.y <- xyTrackDat[1,]$y.proj+ 1 
+    down.x <- xyTrackDat[1,]$x.proj+ 1
+    down.y <- xyTrackDat[1,]$y.proj 
+    stay.x <- xyTrackDat[1,]$x.proj
+    stay.y <- xyTrackDat[1,]$y.proj
+    # real coordinates
+    up.real.x <- up.x
+    up.real.y <- up.y
+    left.real.x <- left.x
+    left.real.y <- left.y
+    right.real.x <- right.x
+    right.real.y <- right.y 
+    down.real.x <- down.x
+    down.real.y <- down.y 
+    stay.real.x <-stay.x
+    stay.real.y <-stay.y 
     
-    for(iter in 1:(20000)){
+    for(iter in 1:(10000)){
       # make decision
       currTime <- startTime
       up.x <- squishToSize(up.x)
@@ -465,36 +249,52 @@ for(i in 1:100){
                    exp(-movePen + (right.val * theta)), # right
                    exp(0 + (stay.val * theta))) # stay
       
-      locs <- list('up' = list("x" = up.x, "y" = up.y),
+      locs.proj <- list('up' = list("x" = up.x, "y" = up.y),
                 'down' = list('x' = down.x, 'y' = down.y),
                 'left' = list('x' = left.x, 'y' = left.y),
                 'right' = list('x' = right.x, 'y' = right.y),
                 'stay' = list('x' = stay.x, 'y' = stay.y))
       
-      decision <- sample(c(1:5), 1, weights, replace = TRUE)
+      locs.real <- list('up' = list("x" = up.real.x, "y" = up.real.y),
+                        'down' = list('x' = down.real.x, 'y' = down.real.y),
+                        'left' = list('x' = left.real.x, 'y' = left.real.y),
+                        'right' = list('x' = right.real.x, 'y' = right.real.y),
+                        'stay' = list('x' = stay.real.x, 'y' = stay.real.y))
+      
+      decision <- sample(c(1:5), 1, prob = weights, replace = TRUE)
       # print(decision)
       # print(weights)
       # print()
-      xyTrackDat[iter + 1, ]$x <- locs[[decision]]$x
-      xyTrackDat[iter + 1, ]$y <- locs[[decision]]$y
+      xyTrackDat[iter + 1, ]$x.proj<- locs.proj[[decision]]$x
+      xyTrackDat[iter + 1, ]$y.proj<- locs.proj[[decision]]$y
+      
+      xyTrackDat[iter + 1, ]$x.real<- locs.real[[decision]]$x
+      xyTrackDat[iter + 1, ]$y.real<- locs.real[[decision]]$y
+      
       # grab new directions
-      up.x <- xyTrackDat[iter + 1,]$x - 1
-      up.y <- xyTrackDat[iter + 1,]$y 
-      left.x <- xyTrackDat[iter + 1,]$x 
-      left.y <- xyTrackDat[iter + 1,]$y - 1
-      right.x <- xyTrackDat[iter + 1,]$x
-      right.y <- xyTrackDat[iter + 1,]$y + 1 
-      down.x <- xyTrackDat[iter + 1,]$x + 1
-      down.y <- xyTrackDat[iter + 1,]$y  
-      stay.x <- xyTrackDat[iter + 1,]$x
-      stay.y <- xyTrackDat[iter + 1,]$y
+      up.x <- xyTrackDat[iter + 1,]$x.proj- 1
+      up.y <- xyTrackDat[iter + 1,]$y.proj
+      left.x <- xyTrackDat[iter + 1,]$x.proj
+      left.y <- xyTrackDat[iter + 1,]$y.proj- 1
+      right.x <- xyTrackDat[iter + 1,]$x.proj
+      right.y <- xyTrackDat[iter + 1,]$y.proj + 1 
+      down.x <- xyTrackDat[iter + 1,]$x.proj+ 1
+      down.y <- xyTrackDat[iter + 1,]$y.proj 
+      stay.x <- xyTrackDat[iter + 1,]$x.proj
+      stay.y <- xyTrackDat[iter + 1,]$y.proj
       
-      
+      up.real.x <- xyTrackDat[iter + 1,]$x.real- 1
+      up.real.y <- xyTrackDat[iter + 1,]$y.real
+      left.real.x <- xyTrackDat[iter + 1,]$x.real
+      left.real.y <- xyTrackDat[iter + 1,]$y.real- 1
+      right.real.x <- xyTrackDat[iter + 1,]$x.real
+      right.real.y <- xyTrackDat[iter + 1,]$y.real+ 1 
+      down.real.x <- xyTrackDat[iter + 1,]$x.real+ 1
+      down.real.y <- xyTrackDat[iter + 1,]$y.real 
+      stay.real.x <- xyTrackDat[iter + 1,]$x.real
+      stay.real.y <- xyTrackDat[iter + 1,]$y.real
+
       currTime <- as.POSIXct(currTime) + lubridate::minutes(1)
-      # for main sim
-      # transDat[loc$cell,]$num <- if_else(iter >= nburnin, transDat[loc$cell,]$num + 1,
-      #                                    transDat[loc$cell,]$num)
-      transDat[loc$cell,]$num <- transDat[loc$cell,]$num + 1
       xyTrackDat[iter + 1, ]$t <- currTime # update time
     }
     # ANALYSIS ---------------------------------------------------------------------
@@ -508,28 +308,41 @@ for(i in 1:100){
     xyTrackDat <- xyTrackDat[seq(1:nrow(xyTrackDat)) %% nThin == 0,]  
     # project cells to e-space
     
-    trk <- make_track(as_tibble(xyTrackDat), .x = x,
-                       .y = y,
-                       .t = t) 
-    # add gaussian noise
-    trk$x_ <- trk$x_ + rnorm(nrow(trk), 0, sigmaSqEta)
-    trk$y_ <- trk$y_ + rnorm(nrow(trk), 0, sigmaSqEta)
+    # REAL TRACK
+    ## get sls from real track
+    stps.real <- make_track(as_tibble(xyTrackDat), .x = x.real,
+                       .y = y.real,
+                       .t = t) %>% steps() 
     
-    stps  <- steps(trk) %>% random_steps(n_control = 30)
+    
+    # PROJECTED TRACK
+    # turn x,y proj into tracks object
+    trk.proj <- make_track(as_tibble(xyTrackDat), .x = x.proj,
+                           .y = y.proj,
+                           .t = t) 
+    # add gaussian noise
+    trk.proj$x_ <- trk.proj$x_ + rnorm(nrow(trk.proj), 0, sigmaSqEta)
+    trk.proj$y_ <- trk.proj$y_ + rnorm(nrow(trk.proj), 0, sigmaSqEta)
+    
+    stps.proj <- trk.proj %>% steps()
+    stps.proj$sl_ <- stps.real$sl_ # add real sls back
+    
+    stps <- stps.proj %>% random_steps(n_control = 30)
+  
     # fit ISSF
     # 
-    # print(mod.surv)
+    # squash steps outside the domain back in
     stps$x2_ <- stps$x2_ %% ncol # row
     stps$y2_ <- stps$y2_ %% ncol # row
     stps$x1_ <- stps$x1_ %% ncol # row
     stps$y1_ <- stps$y1_ %% ncol # row
     
-    stps <- stps %>% amt::extract_covariates(rast(landscape_smooth))
+    stps <- stps %>% amt::extract_covariates(rast(landscape_smooth)) # extract covars
     
     stps <- stps %>% mutate(log_sl_ = log(sl_),
                             land = lyr.1)
     
-    hist(landscape_smooth[cbind(stps[which(stps$case_),]$x1_, stps[which(stps$case_),]$y1_)])
+    #hist(landscape_smooth[cbind(stps[which(stps$case_),]$x1_, stps[which(stps$case_),]$y1_)])
     mod <- amt::fit_issf(stps, case_ ~ log_sl_ + sl_ + land + strata(step_id_))
     print(mod$model$coefficients[3])
     # grab sl_ and log_sl_ distr
@@ -554,17 +367,6 @@ for(i in 1:100){
       moransI = unlist(Moran(raster(landscape_smooth))),
       movePenalty = unlist(movePen),
       nThin = unlist(nThin)))
-      # subDomName <- paste("smoothingFactor", smoothingFactor, sep = "-") # smoothing Factor
-      # ssubDomName <- paste("beta1", betas_l$'1', sep = "-") # betas
-      # sssubDomName <- paste("movement-penalty", movePen, sep = "-") # movement penalty
-      # ssssubDomName <- paste("thinning", nThin, sep = "-")
-      # fname <- paste0("-", subDomName, "-", ssubDomName,
-      #                 "-", sssubDomName, "-", ssssubDomName, "-movement-data-rep-", i, "-realization-", k, sep = "")
-      # #dir.create(fpath, recursive = TRUE) # create dir
-      # #ame <- paste0("movement-data-rep-", i, "-realization-", k, sep = "")
-      # write.table(out.dat,
-      #             file = paste0(path, "/", fname), sep = ",")
-      # 
     }
   }
 }
