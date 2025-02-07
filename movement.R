@@ -89,14 +89,14 @@ checkTrackUD <- function(track){
   mat <- matrix(0, nrow = nrow, ncol = ncol)
   #realSteps <- cbind(track$x, track$y)
   for(i in 1:nrow(track)){
-    mat[track[i,]$x, track[i,]$y] <- mat[track[i,]$x, track[i,]$y] + 1
+    mat[track[i,]$x.proj, track[i,]$y.proj] <- mat[track[i,]$x.proj, track[i,]$y.proj] + 1
   }
   return(mat)
 }
 # CONSTANTS --------------------------------------------------------------------
 
-nrow <- 50
-ncol <- 50
+nrow <- 100
+ncol <- 100
 nsims <- nrow*ncol
 startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
 smoothingFactorL <- c(1,3,5,7)
@@ -149,7 +149,7 @@ path <- paste0(path, "/", domName)
 # SIMULATION -------------------------------------------------------------------
 for(h in 1:1){
   if(h == 1){
-    betaOne <- rep(8, lvars)
+    betaOne <- c(0,1,2,3,4)
     movePenalties <- rep(0, lvars)
     smoothingFactorL <- rep(3, lvars)
     thinVals <- rep(150, lvars)
@@ -172,7 +172,7 @@ for(h in 1:1){
     smoothingFactorL <- rep(3, lvars)
     thinVals <- rep(100, 150, 200)
   }
-for(i in 1:200){
+for(i in 1:500){
   p <- sample(c(1:lvars), 1, replace = TRUE)
   smoothingFactor <- smoothingFactorL[p] 
   movePen <- movePenalties[p] 
