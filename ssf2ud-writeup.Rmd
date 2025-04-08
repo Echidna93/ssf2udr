@@ -21,6 +21,7 @@ library(MASS) # for mvrnorm
 library(survival) # for CLOGIT
 library(cowplot) # for multipanel plots
 library(ggpubr) # for multipanel plots
+library(bootstrap) # for creating bootstrapped samples of betaISSF
 ```
 
 
@@ -29,7 +30,7 @@ library(ggpubr) # for multipanel plots
 #' @param nrow number of rows in matrix
 #' @param ncol number of columns in matrix
 #' @export
-makeLandscapeMatrix <- function(nrow, ncol, binary=TRUE){
+makeLandscapeMatrix <- function(nrow, ncol){
   matrix(runif(nrow*ncol, 0, 1), ncol = ncol, nrow = nrow)
 }
 makeLandscapeMatrixDiscrete <- function(nrow, ncol){
@@ -41,7 +42,7 @@ makeLandscapeMatrixDiscrete <- function(nrow, ncol){
 #' @param nrow number of rows in matrix
 #' @param ncol number of columns in matrix
 #' @export
-makeLandscapeMatrixIncreasing <- function(nrow, ncol, binary=TRUE){
+makeLandscapeMatrixIncreasing <- function(nrow, ncol){
   # make landscape of size nrow*ncol with values of 0
   m <- matrix(sample(0, nrow*ncol, replace = TRUE), nrow = nrow, ncol = ncol)
   j <- 1 # iterator
@@ -62,8 +63,7 @@ rangeNormalize <- function(land){
 #' @param land matrix to smooth
 #' @export
 smooth_pad_terra <- function(pad, sf, land){
-  smooth <- terra::focal(rast(pad), w = sf, fun = "mean",
-                         NAonly = TRUE, padValue = 0)
+  smooth <- terra::focal(rast(pad), w = sf, fun = "mean")
   smooth <- smooth[(sf + 1):(nrow(smooth) - sf),(sf + 1):(nrow(smooth) - sf)]
   # smooth <- matrix(smooth$focal_mean, nrow = nrow(land), ncol = ncol(land))
   # smooth[smooth > mean(smooth)] <- 1
@@ -81,6 +81,46 @@ smoothPadTerraDiscrete <- function(pad, sf, land){
   matrix(as.vector(unlist(smooth)), nrow = nrow(land), ncol = ncol(land))
 }
 
+# Function to get a square of size n around a point (r) in a matrix
+getSubMatrix <- function(matrix, r, n) {
+  # r is a vector (row, col), n is the side length of the square
+  row <- r[1]
+  col <- r[2]
+  
+  # Calculate half the size of the square (for symmetry)
+  half_n <- floor(n / 2)
+  
+  # Calculate the range of rows and columns to extract
+  row_start <- max(1, row - half_n)
+  row_end <- min(nrow(matrix), row + half_n)
+  
+  col_start <- max(1, col - half_n)
+  col_end <- min(ncol(matrix), col + half_n)
+  
+  # Extract the submatrix (the square) around the point
+  square_matrix <- matrix[row_start:row_end, col_start:col_end]
+  
+  return(square_matrix)
+}
+
+
+createBootstrap <- function(smooths, thinVals, nboot, m){
+  pops <- data.frame(matrix(NA, 0, 4))
+  names(pops) <- c("betaISSF", "smoothingFctr", "nThin", "moransI")
+  for(i in 1:length(smooths)){
+    for(j in 1:length(thinVals)){
+      for(k in 1:nboot){
+      population <- metaDat[which(metaDat$smoothingFctr == smooths[i] & metaDat$nThin == thinVals[j]),]$betaISSF
+      pop.morans <- metaDat[which(metaDat$smoothingFctr == smooths[i] & metaDat$nThin == thinVals[j]),]$moransI
+      nobs <- length(population)
+      bootdat <- population[sample(1:nobs, nobs, replace=TRUE)]
+      boot.moran <- pop.morans[sample(1:nobs, nobs, replace=TRUE)] 
+      pops <- rbind(pops, cbind(mean(bootdat), smooths[i], thinVals[j], mean(boot.moran)))
+      }
+    }
+  }
+  return(pops)
+}
 # creates a matrix which is padded by 2x the smoothing function 
 # on each side of the original domain
 #' @param land the original matrix
@@ -108,6 +148,17 @@ createPaddedMatrix <- function(land, sf){
   pad_land
 }
 
+smoothPadMovingWindow <- function(pad, sf, nrow, ncol){
+  smooth <- matrix(0, nrow, ncol)
+  for(i in 1:nrow(smooth)){
+    for(j in 1:ncol(smooth)){
+     submatrix <- getSubMatrix(pad, c((i + sf), (j + sf)), ((2 * sf) + 1))
+        smooth[i,j] <- mean(submatrix)
+      }
+    }
+  return(rangeNormalize(smooth))
+}
+
 squishToSize <- function(dir){
   if(dir > ncol){
     return(dir - ncol)
@@ -128,18 +179,17 @@ checkTrackUD <- function(ud, track){
 
 
 ```{r constants, echo = FALSE}
-# CONSTANTS ----------------------------------------------------------------
-
-nrow <- 10
-ncol <- 10
+# CONSTANTS ----------------------------------------------------
+nrow <- 100
+ncol <- 100
 nsims <- nrow*ncol
 startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
 smoothingFactorL <- c(1,3,5,7)
 nreps = 100
 ntraj <- 10
-lvars <- 1
+lvars <- 10
 sigmaSqEta <- 0.2
-nburnin <- 5000
+nburnin <- 1000
 drctnlPers <- 2
 drctnPrev <- 'stay'
 out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
@@ -150,13 +200,13 @@ names(out.dat) <- c("t",
                     "xMod",
                     "yMod")
 # metaDat holds data on regression coefficents
-metaDat  <- data.frame(matrix(nrow = 0, ncol = 15))
+metaDat  <- data.frame(matrix(nrow = 0, ncol = 13))
 
-names(metaDat) <- c("rep",
-                    "beta", # beta1 is the assigned coeff
-                    "slctnCoff", # selection coeff is the retrieved from regression
+names(metaDat) <- c(#"id",
+                    "theta", # beta1 is the assigned coeff
+                    "betaISSF", # selection coeff is the retrieved from regression
                     "sl_obs", 
-                   "smoothngFctr",
+                    "smoothngFctr",
                     "sl_",
                     "shape",
                     "scale",
@@ -165,10 +215,9 @@ names(metaDat) <- c("rep",
                     "moransI",
                     "movePenalty",
                     "nThin",
-                    "type"
+                    "betaRSF"
 )
 # for testing
-landscape <- makeLandscapeMatrix(nrow = nrow, ncol = ncol)
 xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 2))
 
 names(xyTrackDat) <- c("x", "y")
@@ -181,68 +230,299 @@ if(!dir.exists(paste0(path, "/",domName))){
 }
 path <- paste0(path, "/", domName)
 # create and register worker nodes
-# cl <- parallel::makeCluster(4)
-# registerDoParallel(cl)
+cl <- parallel::makeCluster(4)
+registerDoParallel(cl)
+
+thetas <- c(0,1,5,7,10)
+movePenalties <- rep(0.25, lvars)
+smoothingFactors <- rep(5,lvars)
+thinVals <- c(seq(100, 400, by = 100))
+#thinVals <- c(1, 2, 3, 4, 5)
 ```
 
 
-```{r simulation, echo = FALSE, eval = FALSE}
+```{r generate single traj, echo = FALSE, eval = FALSE}
 # SIMULATION ---------------`----------------------------------------------------
+ud <- matrix(0, nrow 
+             = nrow, ncol = ncol)
+for(i in 1:1){
+  smoothingFactor <- smoothingFactors[sample(1:lvars, 1, replace = TRUE)]
+  movePen <- movePenalties[sample(1:lvars, 1, replace = TRUE)]
+  theta <- thetas[sample(1:lvars, 1, replace = TRUE)]
+  landscape_smooth <- makeLandscapeMatrixIncreasing(nrow, ncol)
+  # if(smoothingFactor == 1){
+  #   landscape_smooth <- landscape
+  # }else{
+  #   pad <- createPaddedMatrix(landscape, smoothingFactor)
+  #   landscape_smooth <- smooth_pad_terra(pad, smoothingFactor, landscape)
+  # }
+  l <- 1
+  landscape_smooth <- cbind(matrix(0, 100, 50), matrix(1.0, 100, 50))
+  # reset xyTrackDat
+  xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 6))
+  names(xyTrackDat) <- c("id", "x.proj", "y.proj","x.real","y.real","t")
+  startTime <- as.POSIXct("2016-11-07 00:00:00 UTC") # start time
+    
+    # x.init <- k
+    # y.init <- h
+    # for random sampling
+    x.init <- sample(1:ncol, 1, replace = TRUE)
+    y.init <- sample(1:ncol, 1, replace = TRUE)
+    # # get init location
+    xyTrackDat[1,]$x.proj = x.init
+    xyTrackDat[1,]$y.proj = y.init
+    xyTrackDat[1,]$x.real = x.init
+    xyTrackDat[1,]$y.real = y.init
+    xyTrackDat[1,]$t <- startTime
+    
+    up.x <- xyTrackDat[1,]$x.proj- 1
+    up.y <- xyTrackDat[1,]$y.proj
+    left.x <- xyTrackDat[1,]$x.proj
+    left.y <- xyTrackDat[1,]$y.proj- 1
+    right.x <- xyTrackDat[1,]$x.proj
+    right.y <- xyTrackDat[1,]$y.proj+ 1 
+    down.x <- xyTrackDat[1,]$x.proj+ 1
+    down.y <- xyTrackDat[1,]$y.proj 
+    stay.x <- xyTrackDat[1,]$x.proj
+    stay.y <- xyTrackDat[1,]$y.proj
+    # real coordinates
+    up.real.x <- up.x
+    up.real.y <- up.y
+    left.real.x <- left.x
+    left.real.y <- left.y
+    right.real.x <- right.x
+    right.real.y <- right.y 
+    down.real.x <- down.x
+    down.real.y <- down.y 
+    stay.real.x <-stay.x
+    stay.real.y <-stay.y 
+    
+    for(iter in 1:(nrow*ncol)){
+      # make decision
+      currTime <- startTime
+      up.x <- squishToSize(up.x)
+      up.y <- squishToSize(up.y)
+      down.x <- squishToSize(down.x)
+      down.y <- squishToSize(down.y)
+      left.x <- squishToSize(left.x)
+      left.y <- squishToSize(left.y)
+      right.x <- squishToSize(right.x)
+      right.y <- squishToSize(right.y)
+      stay.x <- squishToSize(stay.x)
+      stay.y <- squishToSize(stay.y)
+      
+      up.val <- landscape_smooth[up.x, up.y]
+      down.val <- landscape_smooth[down.x, down.y]
+      left.val <- landscape_smooth[left.x, left.y]
+      right.val <- landscape_smooth[right.x, right.y]
+      stay.val <- landscape_smooth[stay.x, stay.y]
+      
+      weights <- c(exp(-movePen + (up.val * theta)), # up
+                   exp(-movePen + (down.val * theta)), # down
+                   exp(-movePen + (left.val * theta)), # left
+                   exp(-movePen + (right.val * theta)), # right
+                   exp(0 + (stay.val * theta))) # stay
+      
+      locs.proj <- list('up' = list("x" = up.x, "y" = up.y),
+                'down' = list('x' = down.x, 'y' = down.y),
+                'left' = list('x' = left.x, 'y' = left.y),
+                'right' = list('x' = right.x, 'y' = right.y),
+                'stay' = list('x' = stay.x, 'y' = stay.y))
+      
+      locs.real <- list('up' = list("x" = up.real.x, "y" = up.real.y),
+                        'down' = list('x' = down.real.x, 'y' = down.real.y),
+                        'left' = list('x' = left.real.x, 'y' = left.real.y),
+                        'right' = list('x' = right.real.x, 'y' = right.real.y),
+                        'stay' = list('x' = stay.real.x, 'y' = stay.real.y))
+      
+      decision <- sample(c(1:5), 1, prob = weights, replace = TRUE)
+
+      xyTrackDat[iter + 1, ]$x.proj<- locs.proj[[decision]]$x
+      xyTrackDat[iter + 1, ]$y.proj<- locs.proj[[decision]]$y
+      
+      xyTrackDat[iter + 1, ]$x.real<- locs.real[[decision]]$x
+      xyTrackDat[iter + 1, ]$y.real<- locs.real[[decision]]$y
+      
+      # grab new directions
+      up.x <- xyTrackDat[iter + 1,]$x.proj- 1
+      up.y <- xyTrackDat[iter + 1,]$y.proj
+      left.x <- xyTrackDat[iter + 1,]$x.proj
+      left.y <- xyTrackDat[iter + 1,]$y.proj- 1
+      right.x <- xyTrackDat[iter + 1,]$x.proj
+      right.y <- xyTrackDat[iter + 1,]$y.proj + 1 
+      down.x <- xyTrackDat[iter + 1,]$x.proj+ 1
+      down.y <- xyTrackDat[iter + 1,]$y.proj 
+      stay.x <- xyTrackDat[iter + 1,]$x.proj
+      stay.y <- xyTrackDat[iter + 1,]$y.proj
+      
+      up.real.x <- xyTrackDat[iter + 1,]$x.real- 1
+      up.real.y <- xyTrackDat[iter + 1,]$y.real
+      left.real.x <- xyTrackDat[iter + 1,]$x.real
+      left.real.y <- xyTrackDat[iter + 1,]$y.real- 1
+      right.real.x <- xyTrackDat[iter + 1,]$x.real
+      right.real.y <- xyTrackDat[iter + 1,]$y.real+ 1 
+      down.real.x <- xyTrackDat[iter + 1,]$x.real+ 1
+      down.real.y <- xyTrackDat[iter + 1,]$y.real 
+      stay.real.x <- xyTrackDat[iter + 1,]$x.real
+      stay.real.y <- xyTrackDat[iter + 1,]$y.real
+
+      currTime <- as.POSIXct(currTime) + lubridate::minutes(1)
+      xyTrackDat[iter + 1, ]$t <- currTime # update time
+      
+    }
+    # ANALYSIS ------s-------------------------------------------------------------
+    # thin the movement dataset
+    xyTrackDat2 <- xyTrackDat
+    xyTrackDat2$id <- l
+    # fit RSF
+rsfIn <- data.frame(rbind(cbind(land = landscape_smooth[xyTrackDat2$x.proj,][xyTrackDat2$y.proj],
+                                used = 1),
+      cbind(land = as.vector(landscape_smooth), used = 0)))
+
+rsfOut <- glm(used ~ land, data = rsfIn, family = binomial)
+
+
+    # ud <- checkTrackUD(ud, xyTrackDat2) 
+    # plot(rast(landscape_smooth), col = gray.colors(10, start = 0.3, end = 0.9, gamma = 2.2, alpha = NULL))
+    # lines(make_track(as_tibble(xyTrackDat2), .x = x.real, .y = y.real, .t = t), col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
+    #write.table(xyTrackDat2, paste0("C:/Users/jackx022/Desktop/SSF2UD-main/data/raw/outdat-sf-", smoothingFactor, "-", "theta-", theta, "-movePen-", movePen, "-type-", type), sep = ",", append = TRUE, col.names = !file.exists(paste0("C:/Users/jackx022/Desktop/SSF2UD-main/data/raw/outdat-sf-", smoothingFactor, "-", "theta-", theta, "-movePen-", movePen, "-type-", type)))
+
+# update the ud
+# remove burnin
+for(p in 1:length(thinVals)){
+  nThin <- thinVals[p]
+  xyTrackDat <- xyTrackDat2[nburnin:nrow(xyTrackDat2),]
+  xyTrackDat <- xyTrackDat2[seq(1:nrow(xyTrackDat2)) %% nThin == 0,]
+# project cells to e-space
+
+# REAL TRACK
+## get sls from real track
+  trk.real <- make_track(as_tibble(xyTrackDat), .x = x.real,
+                   .y = y.real,
+                   .t = t)
+
+trk.real$x_ <- trk.real$x_ + rnorm(nrow(trk.real), 0, sigmaSqEta)
+trk.real$y_ <- trk.real$y_ + rnorm(nrow(trk.real), 0, sigmaSqEta)
+
+stps.real <- trk.real %>% steps()
+
+# PROJECTED TRACK
+# turn x,y proj into tracks object
+trk.proj <- make_track(as_tibble(xyTrackDat), .x = x.proj,
+                       .y = y.proj,
+                       .t = t)
+# add gaussian noise
+trk.proj$x_ <- trk.proj$x_ + rnorm(nrow(trk.proj), 0, sigmaSqEta)
+trk.proj$y_ <- trk.proj$y_ + rnorm(nrow(trk.proj), 0, sigmaSqEta)
+
+stps.proj <- trk.proj %>% steps()
+stps.proj$sl_ <- stps.real$sl_ # add real sls back
+
+stps <- stps.proj %>% random_steps(n_control = 30)
+
+# fit ISSF
+# squash steps outside the domain back in
+stps$x2_ <- stps$x2_ %% ncol # row
+stps$y2_ <- stps$y2_ %% ncol # row
+stps$x1_ <- stps$x1_ %% ncol # row
+stps$y1_ <- stps$y1_ %% ncol # row
+
+# need to project the zeros back to ncol
+stps$x2_ <- if_else(stps$x2_ < 1, ncol, stps$x2_)
+stps$y2_ <- if_else(stps$y2_ < 1, ncol, stps$y2_)
+stps$x1_ <- if_else(stps$x1_ < 1, ncol, stps$x1_)
+stps$y1_ <- if_else(stps$y1_ < 1, ncol, stps$x1_)
+
+stps$land <- landscape_smooth[cbind(stps$x2_, stps$y2_)]
+
+stps <- stps %>% mutate(log_sl_ = log(sl_))
+
+# fit ISSF 
+modISSA <- amt::fit_issf(stps, case_ ~ log_sl_ + sl_ + land + strata(step_id_))
+
+# # grab sl_ and log_sl_ distr
+norms <- mvrnorm(ntraj, cbind(modISSA$model$coefficients['log_sl_'],
+                               modISSA$model$coefficients['sl_']),
+               vcov(modISSA$model)[1:2, 1:2])
+scale <- update_sl_distr(modISSA, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$scale
+shape <- update_sl_distr(modISSA, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$shape
+
+
+metaDat <- rbind(metaDat,cbind(
+  rep = i,
+  theta = theta,
+  betaISSF = unlist(modISSA$model$coefficients[3]), # grab LS regression coefficient
+  var_slctn = unlist(vcov(modISSA$model)[3,3]), # grab variance
+  sl_ = unlist(modISSA$model$coefficients['sl_']),
+  sl_obs = 1,
+  scale = scale, # grab variance
+  shape = shape,
+  var_log_sl_ = unlist(vcov(modISSA$model)[1,1]), # grab variance
+  var_sl_log_sl_ = unlist(vcov(modISSA$model)[1,2]),
+  smoothingFctr = unlist(smoothingFactor),
+  moransI = unlist(Moran(raster(landscape_smooth))),
+  movePenalty = unlist(movePen),
+  nThin = unlist(nThin),
+  betaRSF = rsfOut$coefficients[2]))
+       l <- l + 1
+      }
+}
+#write.table(metaDat,"C:/Users/jackx022/Desktop/SSF2UD-main/data/metaDat", sep = ",", append = TRUE, col.names = !file.exists("C:/Users/jackx022/Desktop/SSF2UD-main/data/metaDat"))
+
+```
+```{r generate UD stats, echo = FALSE, eval = FALSE}
+# SIMULATION -----------------------------------------------------------------
+simIter <- 1
 for(h in 3:3){
   ud <- matrix(0, nrow = nrow, ncol = ncol)
   if(h == 1){
-    betaOne <- rep(0, lvars)
-    movePenalties <- rep(0, lvars)
-    smoothingFactorL <- rep(5, lvars)
-    thinVals <- rep(150, lvars)
-    type = 1
+    thetas <- c(0,1,2,3,4)
+    movePenalties <- rep(0.25, lvars)
+    smoothingFactors <- rep(3, lvars)
   }
   else if(h == 2){
-    betaOne <- rep(1, lvars)
+    thetas <- rep(1, lvars)
     movePenalties <- c(0, 0.25, 0.5, 0.75, 1)
-    smoothingFactorL <- rep(3, lvars)
-    thinVals <- rep(150, lvars)
-    type = 2
+    smoothingFactors <- rep(3, lvars)
   }
   else if(h == 3){
-    betaOne <- rep(1, lvars)
+    thetas <- rep(2, lvars)
     movePenalties <- rep(0, lvars)
-    smoothingFactorL <- c(1)
-    thinVals <- rep(5, lvars)
-    type = 3
+    smoothingFactors <- c(0,1,2,3,4,5,6,7,8,9)
   }
-  else if(h == 4){
-    betaOne <- rep(1, lvars)
-    movePenalties <- rep(0, lvars)
-    smoothingFactorL <- rep(1, lvars)
-    thinVals <- c(50, 100, 150, 200, 250)
-    type = 4
-  }
-for(i in 1:1){
-  p <- sample(c(1:lvars), 1, replace = TRUE)
-  smoothingFactor <- 3
-  movePen <- movePenalties[p] 
-  theta <- 3
-  nThin <- 1 # grab thinning value for this iteration
-  print(theta)
-  if(smoothingFactor == 1){
+  metaDat <- rbind(metaDat, foreach(i = 1:lvars, .combine = rbind) %dopar% {
+  library(amt)
+  library(tidyr)
+  library(raster)
+  library(terra)
+  library(dplyr)
+  library(MASS)
+  landscape <- makeLandscapeMatrix(nrow = nrow, ncol = ncol)
+  smoothingFactor <- smoothingFactors[i]
+  movePen <- movePenalties[i] 
+  theta <- thetas[i]
+  id <- paste0(simIter, "-", theta, "-", smoothingFactor, "-", (movePen*100))
+  if(smoothingFactor == 0){
     landscape_smooth <- landscape
-  }else{
-    pad <- createPaddedMatrix(landscape, smoothingFactor)
-    landscape_smooth <- smooth_pad_terra(pad, smoothingFactor, landscape)
+  }else if(smoothingFactor == 9){
+    landscape_smooth <- cbind(matrix(0, 100, 50), matrix(1.0, 100, 50))
   }
-  for(h in 1:nrow){
-    for(k in 1:ncol){
-    print(h)
+  else{
+    pad <- createPaddedMatrix(landscape, smoothingFactor)
+    landscape_smooth <- smoothPadMovingWindow(pad, smoothingFactor, nrow, ncol)
+  }
+  #landscape_smooth <- cbind(matrix(0, 100, 50), matrix(1.0, 100, 50))
+  for(j in 1:6){
+    for(k in 1:6){
     # reset xyTrackDat
     xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 5))
     names(xyTrackDat) <- c("x.proj", "y.proj","x.real","y.real","t")
     startTime <- as.POSIXct("2016-11-07 00:00:00 UTC") # start time
-    x.init <- k
-    y.init <- h
-    # for random sampling
-    # x.init <- sample(1:ncol, 1, replace = TRUE)
-    # y.init <- sample(1:ncol, 1, replace = TRUE)
+    # x.init <- k
+    # y.init <- j
+    # # for random sampling
+    x.init <- sample(1:ncol, 1, replace = TRUE)
+    y.init <- sample(1:ncol, 1, replace = TRUE)
     # # get init location
     xyTrackDat[1,]$x.proj = x.init
     xyTrackDat[1,]$y.proj = y.init
@@ -274,7 +554,7 @@ for(i in 1:1){
     stay.real.x <-stay.x
     stay.real.y <-stay.y 
     
-    for(iter in 1:(1000)){
+    for(iter in 1:40000){
       # make decision
       currTime <- startTime
       up.x <- squishToSize(up.x)
@@ -349,92 +629,356 @@ for(i in 1:1){
     # ANALYSIS ------s-------------------------------------------------------------
     # thin the movement dataset
     xyTrackDat2 <- xyTrackDat
-    xyTrackDat <- xyTrackDat[seq(1:nrow(xyTrackDat)) %% nThin == 0,]
-    ud <- checkTrackUD(ud, xyTrackDat) 
+    # fit RSF
+
+    # ud <- checkTrackUD(ud, xyTrackDat2) 
     # plot(rast(landscape_smooth), col = gray.colors(10, start = 0.3, end = 0.9, gamma = 2.2, alpha = NULL))
     # lines(make_track(as_tibble(xyTrackDat2), .x = x.real, .y = y.real, .t = t), col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
-    # update the ud
-    # ## remove burnin
-    # xyTrackDat <- xyTrackDat[nburnin:nrow(xyTrackDat),]
-    # xyTrackDat <- xyTrackDat[seq(1:nrow(xyTrackDat)) %% nThin == 0,]  
-    # # project cells to e-space
-    # 
-    # # REAL TRACK
-    # ## get sls from real track
-    # trk.real <- make_track(as_tibble(xyTrackDat), .x = x.real,
-    #                    .y = y.real,
-    #                    .t = t) 
-    # 
-    # trk.real$x_ <- trk.real$x_ + rnorm(nrow(trk.real), 0, sigmaSqEta)
-    # trk.real$y_ <- trk.real$y_ + rnorm(nrow(trk.real), 0, sigmaSqEta)
-    # 
-    # stps.real <- trk.real %>% steps() 
-    # 
-    # 
-    # # PROJECTED TRACK
-    # # turn x,y proj into tracks object
-    # trk.proj <- make_track(as_tibble(xyTrackDat), .x = x.proj,
-    #                        .y = y.proj,
-    #                        .t = t) 
-    # # add gaussian noise
-    # trk.proj$x_ <- trk.proj$x_ + rnorm(nrow(trk.proj), 0, sigmaSqEta)
-    # trk.proj$y_ <- trk.proj$y_ + rnorm(nrow(trk.proj), 0, sigmaSqEta)
-    # 
-    # stps.proj <- trk.proj %>% steps()
-    # stps.proj$sl_ <- stps.real$sl_ # add real sls back
-    # 
-    # stps <- stps.proj %>% random_steps(n_control = 30)
-    # 
-    # # fit ISSF
-    # # 
-    # # squash steps outside the domain back in
-    # stps$x2_ <- stps$x2_ %% ncol # row
-    # stps$y2_ <- stps$y2_ %% ncol # row
-    # stps$x1_ <- stps$x1_ %% ncol # row
-    # stps$y1_ <- stps$y1_ %% ncol # row
-    # 
-    # # need to project the zeros back to ncol
-    # stps$x2_ <- if_else(stps$x2_ < 1, ncol, stps$x2_)
-    # stps$y2_ <- if_else(stps$y2_ < 1, ncol, stps$y2_) 
-    # stps$x1_ <- if_else(stps$x1_ < 1, ncol, stps$x1_) 
-    # stps$y1_ <- if_else(stps$y1_ < 1, ncol, stps$x1_) 
-    # 
-    # stps$land <- landscape_smooth[cbind(stps$x2_, stps$y2_)]
-    # 
-    # stps <- stps %>% mutate(log_sl_ = log(sl_))
-    # 
-    # #hist(landscape_smooth[cbind(stps[which(stps$case_),]$x1_, stps[which(stps$case_),]$y1_)])
-    # mod <- amt::fit_issf(stps, case_ ~ log_sl_ + sl_ + land + strata(step_id_))
-    # print(mod$model$coefficients[3])
-    # # grab sl_ and log_sl_ distr
-    # norms <- mvrnorm(ntraj, cbind(mod$model$coefficients['log_sl_'],
-    #                               mod$model$coefficients['sl_']),
-    #                  vcov(mod$model)[1:2, 1:2])
-    # scale <- update_sl_distr(mod, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$scale
-    # shape <- update_sl_distr(mod, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$shape
-    # # plot(rast(matrix(transDat$num, ncol = ncol, nrow = nrow)))
-    # metaDat <- rbind(metaDat,cbind(
-    #   rep = i,
-    #   beta1 = theta,
-    #   slctnCoff = unlist(mod$model$coefficients[3]), # grab LS regression coefficient
-    #   var_slctn = unlist(vcov(mod$model)[3,3]), # grab variance
-    #   sl_ = unlist(mod$model$coefficients['sl_']),
-    #   sl_obs = 1, 
-    #   scale = scale, # grab variance
-    #   shape = shape,
-    #   var_log_sl_ = unlist(vcov(mod$model)[1,1]), # grab variance
-    #   var_sl_log_sl_ = unlist(vcov(mod$model)[1,2]),
-    #   smoothingFctr = unlist(smoothingFactor),
-    #   moransI = unlist(Moran(raster(landscape_smooth))),
-    #   movePenalty = unlist(movePen),
-    #   nThin = unlist(nThin),
-    #   type = type))
+    # write.table(xyTrackDat2, paste0("C:/Users/jackx022/Desktop/SSF2UD-main/data/raw/outdat-sf-", id), sep = ",", append = TRUE, col.names = !file.exists(paste0("C:/Users/jackx022/Desktop/SSF2UD-main/data/raw/outdat-sf-", id)))
+
+# update the ud
+# remove burnin
+for(p in 1:length(thinVals)){
+  nThin <- thinVals[p]
+  xyTrackDat <- xyTrackDat2[nburnin:nrow(xyTrackDat2),]
+  xyTrackDat <- xyTrackDat[seq(1:nrow(xyTrackDat)) %% nThin == 0,]
+
+# project cells to e-space
+
+# REAL TRACK
+## get sls from real track
+  trk.real <- make_track(as_tibble(xyTrackDat), .x = x.real,
+                   .y = y.real,
+                   .t = t)
+
+trk.real$x_ <- trk.real$x_ + rnorm(nrow(trk.real), 0, sigmaSqEta)
+trk.real$y_ <- trk.real$y_ + rnorm(nrow(trk.real), 0, sigmaSqEta)
+
+stps.real <- trk.real %>% steps()
+
+# PROJECTED TRACK
+# turn x,y proj into tracks object
+trk.proj <- make_track(as_tibble(xyTrackDat), .x = x.proj,
+                       .y = y.proj,
+                       .t = t)
+# add gaussian noise
+trk.proj$x_ <- trk.proj$x_ + rnorm(nrow(trk.proj), 0, sigmaSqEta)
+trk.proj$y_ <- trk.proj$y_ + rnorm(nrow(trk.proj), 0, sigmaSqEta)
+
+stps.proj <- trk.proj %>% steps()
+stps.proj$sl_ <- stps.real$sl_ # add real sls back
+
+stps <- stps.proj %>% random_steps(n_control = 30)
+
+# fit ISSF
+# squash steps outside the domain back in
+stps$x2_ <- stps$x2_ %% ncol # row
+stps$y2_ <- stps$y2_ %% ncol # row
+stps$x1_ <- stps$x1_ %% ncol # row
+stps$y1_ <- stps$y1_ %% ncol # row
+
+# need to project the zeros back to ncol
+stps$x2_ <- if_else(stps$x2_ < 1, ncol, stps$x2_)
+stps$y2_ <- if_else(stps$y2_ < 1, ncol, stps$y2_)
+stps$x1_ <- if_else(stps$x1_ < 1, ncol, stps$x1_)
+stps$y1_ <- if_else(stps$y1_ < 1, ncol, stps$x1_)
+
+stps$land <- landscape_smooth[cbind(stps$x2_, stps$y2_)]
+
+stps <- stps %>% mutate(log_sl_ = log(sl_))
+
+rsfIn <- data.frame(rbind(cbind(land = landscape_smooth[cbind(xyTrackDat$x.proj,xyTrackDat$y.proj)],
+                                used = 1),
+      cbind(land = as.vector(landscape_smooth), used = 0)))
+
+rsfOut <- glm(formula = used ~ land, data = rsfIn, family = "binomial")
+
+
+# fit ISSF 
+modISSA <- amt::fit_issf(stps, case_ ~ log_sl_ + sl_ + land + strata(step_id_))
+
+# # grab sl_ and log_sl_ distr
+norms <- mvrnorm(ntraj, cbind(modISSA$model$coefficients['log_sl_'],
+                               modISSA$model$coefficients['sl_']),
+               vcov(modISSA$model)[1:2, 1:2])
+scale <- update_sl_distr(modISSA, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$scale
+shape <- update_sl_distr(modISSA, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$shape
+metaDat <- rbind(metaDat,cbind(
+  # id = id,
+  theta = theta,
+  betaISSF = unlist(modISSA$model$coefficients[3]), # grab LS regression coefficient
+  var_slctn = unlist(vcov(modISSA$model)[3,3]), # grab variance
+  sl_ = unlist(modISSA$model$coefficients['sl_']),
+  sl_obs = 1,
+  scale = scale, # grab variance
+  shape = shape,
+  var_log_sl_ = unlist(vcov(modISSA$model)[1,1]), # grab variance
+  var_sl_log_sl_ = unlist(vcov(modISSA$model)[1,2]),
+  smoothingFctr = unlist(smoothingFactor),
+  moransI = unlist(Moran(raster(landscape_smooth))),
+  movePenalty = unlist(movePen),
+  nThin = unlist(nThin),
+  betaRSF = rsfOut$coefficients[2]))
+      }
+    }
+  }
+# write.table(metaDat,"C:/Users/jackx022/Desktop/SSF2UD-main/data/metaDat", sep = ",", append = TRUE, col.names = !file.exists("C:/Users/jackx022/Desktop/SSF2UD-main/data/metaDat"))
+# writeRaster(rast(landscape_smooth), filename = paste0("C:/Users/jackx022/Desktop/SSF2UD-main/data/raw/", "landscape-", id, ".tif"))
+  return(metaDat)
+  })
+  simIter <- simIter + 1
+}
+
+
+```
+
+
+```{r generate single traj}
+simIter <- 1
+for(h in 3:3){
+  ud <- matrix(0, nrow = nrow, ncol = ncol)
+  if(h == 1){
+    thetas <- c(0,1,2,3,4)
+    movePenalties <- rep(0.25, lvars)
+    smoothingFactors <- rep(3, lvars)
+  }
+  else if(h == 2){
+    thetas <- rep(1, lvars)
+    movePenalties <- c(0, 0.25, 0.5, 0.75, 1)
+    smoothingFactors <- rep(3, lvars)
+  }
+  else if(h == 3){
+    thetas <- rep(2, lvars)
+    movePenalties <- rep(0.25, lvars)
+    smoothingFactors <- c(9)
+  }
+  for(i in 1:1){
+  landscape <- makeLandscapeMatrix(nrow = nrow, ncol = ncol)
+  smoothingFactor <- smoothingFactors[i]
+  movePen <- movePenalties[i] 
+  theta <- thetas[i]
+  id <- paste0(simIter, "-", theta, "-", smoothingFactor, "-", (movePen*100))
+  # if(smoothingFactor == 0){
+  #   landscape_smooth <- landscape
+  # }else{
+  #   pad <- createPaddedMatrix(landscape, smoothingFactor)
+  #   landscape_smooth <- smoothPadMovingWindow(pad, smoothingFactor, nrow, ncol)
+  # }
+  landscape_smooth <- cbind(matrix(0, 100, 50), matrix(1.0, 100, 50))
+  for(j in 1:1){
+    for(k in 1:1){
+    # reset xyTrackDat
+    xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 5))
+    names(xyTrackDat) <- c("x.proj", "y.proj","x.real","y.real","t")
+    startTime <- as.POSIXct("2016-11-07 00:00:00 UTC") # start time
+    x.init <- 50
+    y.init <- 50
+    # for random sampling
+    # x.init <- sample(1:ncol, 1, replace = TRUE)
+    # y.init <- sample(1:ncol, 1, replace = TRUE)
+    # # get init location
+    xyTrackDat[1,]$x.proj = x.init
+    xyTrackDat[1,]$y.proj = y.init
+    
+    xyTrackDat[1,]$x.real = x.init
+    xyTrackDat[1,]$y.real = y.init
+    
+    xyTrackDat[1,]$t <- startTime
+    
+    up.x <- xyTrackDat[1,]$x.proj- 1
+    up.y <- xyTrackDat[1,]$y.proj
+    left.x <- xyTrackDat[1,]$x.proj
+    left.y <- xyTrackDat[1,]$y.proj- 1
+    right.x <- xyTrackDat[1,]$x.proj
+    right.y <- xyTrackDat[1,]$y.proj+ 1 
+    down.x <- xyTrackDat[1,]$x.proj+ 1
+    down.y <- xyTrackDat[1,]$y.proj 
+    stay.x <- xyTrackDat[1,]$x.proj
+    stay.y <- xyTrackDat[1,]$y.proj
+    # real coordinates
+    up.real.x <- up.x
+    up.real.y <- up.y
+    left.real.x <- left.x
+    left.real.y <- left.y
+    right.real.x <- right.x
+    right.real.y <- right.y 
+    down.real.x <- down.x
+    down.real.y <- down.y 
+    stay.real.x <-stay.x
+    stay.real.y <-stay.y 
+    
+    for(iter in 1:40000){
+      # make decision
+      currTime <- startTime
+      up.x <- squishToSize(up.x)
+      up.y <- squishToSize(up.y)
+      down.x <- squishToSize(down.x)
+      down.y <- squishToSize(down.y)
+      left.x <- squishToSize(left.x)
+      left.y <- squishToSize(left.y)
+      right.x <- squishToSize(right.x)
+      right.y <- squishToSize(right.y)
+      stay.x <- squishToSize(stay.x)
+      stay.y <- squishToSize(stay.y)
+      
+      up.val <- landscape_smooth[up.x, up.y]
+      down.val <- landscape_smooth[down.x, down.y]
+      left.val <- landscape_smooth[left.x, left.y]
+      right.val <- landscape_smooth[right.x, right.y]
+      stay.val <- landscape_smooth[stay.x, stay.y]
+      
+      weights <- c(exp(-movePen + (up.val * theta)), # up
+                   exp(-movePen + (down.val * theta)), # down
+                   exp(-movePen + (left.val * theta)), # left
+                   exp(-movePen + (right.val * theta)), # right
+                   exp(0 + (stay.val * theta))) # stay
+      
+      locs.proj <- list('up' = list("x" = up.x, "y" = up.y),
+                'down' = list('x' = down.x, 'y' = down.y),
+                'left' = list('x' = left.x, 'y' = left.y),
+                'right' = list('x' = right.x, 'y' = right.y),
+                'stay' = list('x' = stay.x, 'y' = stay.y))
+      
+      locs.real <- list('up' = list("x" = up.real.x, "y" = up.real.y),
+                        'down' = list('x' = down.real.x, 'y' = down.real.y),
+                        'left' = list('x' = left.real.x, 'y' = left.real.y),
+                        'right' = list('x' = right.real.x, 'y' = right.real.y),
+                        'stay' = list('x' = stay.real.x, 'y' = stay.real.y))
+      
+      decision <- sample(c(1:5), 1, prob = weights, replace = TRUE)
+
+      xyTrackDat[iter + 1, ]$x.proj<- locs.proj[[decision]]$x
+      xyTrackDat[iter + 1, ]$y.proj<- locs.proj[[decision]]$y
+      
+      xyTrackDat[iter + 1, ]$x.real<- locs.real[[decision]]$x
+      xyTrackDat[iter + 1, ]$y.real<- locs.real[[decision]]$y
+      
+      # grab new directions
+      up.x <- xyTrackDat[iter + 1,]$x.proj- 1
+      up.y <- xyTrackDat[iter + 1,]$y.proj
+      left.x <- xyTrackDat[iter + 1,]$x.proj
+      left.y <- xyTrackDat[iter + 1,]$y.proj- 1
+      right.x <- xyTrackDat[iter + 1,]$x.proj
+      right.y <- xyTrackDat[iter + 1,]$y.proj + 1 
+      down.x <- xyTrackDat[iter + 1,]$x.proj+ 1
+      down.y <- xyTrackDat[iter + 1,]$y.proj 
+      stay.x <- xyTrackDat[iter + 1,]$x.proj
+      stay.y <- xyTrackDat[iter + 1,]$y.proj
+      
+      up.real.x <- xyTrackDat[iter + 1,]$x.real- 1
+      up.real.y <- xyTrackDat[iter + 1,]$y.real
+      left.real.x <- xyTrackDat[iter + 1,]$x.real
+      left.real.y <- xyTrackDat[iter + 1,]$y.real- 1
+      right.real.x <- xyTrackDat[iter + 1,]$x.real
+      right.real.y <- xyTrackDat[iter + 1,]$y.real+ 1 
+      down.real.x <- xyTrackDat[iter + 1,]$x.real+ 1
+      down.real.y <- xyTrackDat[iter + 1,]$y.real 
+      stay.real.x <- xyTrackDat[iter + 1,]$x.real
+      stay.real.y <- xyTrackDat[iter + 1,]$y.real
+
+      currTime <- as.POSIXct(currTime) + lubridate::minutes(1)
+      xyTrackDat[iter + 1, ]$t <- currTime # update time
+    }
+    # ANALYSIS ------s-------------------------------------------------------------
+    # thin the movement dataset
+    xyTrackDat2 <- xyTrackDat
+    # fit RSF
+
+    # ud <- checkTrackUD(ud, xyTrackDat2) 
+    # plot(rast(landscape_smooth), col = gray.colors(10, start = 0.3, end = 0.9, gamma = 2.2, alpha = NULL))
+    # lines(make_track(as_tibble(xyTrackDat2), .x = x.real, .y = y.real, .t = t), col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
+    # write.table(xyTrackDat2, paste0("C:/Users/jackx022/Desktop/SSF2UD-main/data/raw/outdat-sf-", id), sep = ",", append = TRUE, col.names = !file.exists(paste0("C:/Users/jackx022/Desktop/SSF2UD-main/data/raw/outdat-sf-", id)))
+
+# update the ud
+# remove burnin
+for(p in 1:length(thinVals)){
+  nThin <- thinVals[p]
+  xyTrackDat <- xyTrackDat2[nburnin:nrow(xyTrackDat2),]
+  xyTrackDat <- xyTrackDat[seq(1:nrow(xyTrackDat)) %% nThin == 0,]
+
+# project cells to e-space
+
+# REAL TRACK
+## get sls from real track
+  trk.real <- make_track(as_tibble(xyTrackDat), .x = x.real,
+                   .y = y.real,
+                   .t = t)
+
+trk.real$x_ <- trk.real$x_ + rnorm(nrow(trk.real), 0, sigmaSqEta)
+trk.real$y_ <- trk.real$y_ + rnorm(nrow(trk.real), 0, sigmaSqEta)
+
+stps.real <- trk.real %>% steps()
+
+# PROJECTED TRACK
+# turn x,y proj into tracks object
+trk.proj <- make_track(as_tibble(xyTrackDat), .x = x.proj,
+                       .y = y.proj,
+                       .t = t)
+# add gaussian noise
+trk.proj$x_ <- trk.proj$x_ + rnorm(nrow(trk.proj), 0, sigmaSqEta)
+trk.proj$y_ <- trk.proj$y_ + rnorm(nrow(trk.proj), 0, sigmaSqEta)
+
+stps.proj <- trk.proj %>% steps()
+stps.proj$sl_ <- stps.real$sl_ # add real sls back
+
+stps <- stps.proj %>% random_steps(n_control = 30)
+
+# fit ISSF
+# squash steps outside the domain back in
+stps$x2_ <- stps$x2_ %% ncol # row
+stps$y2_ <- stps$y2_ %% ncol # row
+stps$x1_ <- stps$x1_ %% ncol # row
+stps$y1_ <- stps$y1_ %% ncol # row
+
+# need to project the zeros back to ncol
+stps$x2_ <- if_else(stps$x2_ < 1, ncol, stps$x2_)
+stps$y2_ <- if_else(stps$y2_ < 1, ncol, stps$y2_)
+stps$x1_ <- if_else(stps$x1_ < 1, ncol, stps$x1_)
+stps$y1_ <- if_else(stps$y1_ < 1, ncol, stps$x1_)
+
+stps$land <- landscape_smooth[cbind(stps$x2_, stps$y2_)]
+
+stps <- stps %>% mutate(log_sl_ = log(sl_))
+
+rsfIn <- data.frame(rbind(cbind(land = landscape_smooth[cbind(xyTrackDat$x.proj,xyTrackDat$y.proj)],
+                                used = 1),
+      cbind(land = as.vector(landscape_smooth), used = 0)))
+
+rsfOut <- glm(formula = used ~ land, data = rsfIn, family = "binomial")
+
+
+# fit ISSF 
+modISSA <- amt::fit_issf(stps, case_ ~ log_sl_ + sl_ + land + strata(step_id_))
+
+# # grab sl_ and log_sl_ distr
+norms <- mvrnorm(ntraj, cbind(modISSA$model$coefficients['log_sl_'],
+                               modISSA$model$coefficients['sl_']),
+               vcov(modISSA$model)[1:2, 1:2])
+scale <- update_sl_distr(modISSA, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$scale
+shape <- update_sl_distr(modISSA, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$shape
+metaDat <- rbind(metaDat,cbind(
+  # id = id,
+  theta = theta,
+  betaISSF = unlist(modISSA$model$coefficients[3]), # grab LS regression coefficient
+  var_slctn = unlist(vcov(modISSA$model)[3,3]), # grab variance
+  sl_ = unlist(modISSA$model$coefficients['sl_']),
+  sl_obs = 1,
+  scale = scale, # grab variance
+  shape = shape,
+  var_log_sl_ = unlist(vcov(modISSA$model)[1,1]), # grab variance
+  var_sl_log_sl_ = unlist(vcov(modISSA$model)[1,2]),
+  smoothingFctr = unlist(smoothingFactor),
+  moransI = unlist(Moran(raster(landscape_smooth))),
+  movePenalty = unlist(movePen),
+  nThin = unlist(nThin),
+  betaRSF = rsfOut$coefficients[2]))
       }
     }
   }
 }
-```
+}
 
+```
 
 ```{r plotting, echo = FALSE, eval = FALSE}
 # PLOTTING ---------------------------------------------------------------------
@@ -516,12 +1060,14 @@ ggplot(metaDat, aes(y = unlist(slctnCoff), x = unlist(smoothingFctr), color = fa
 #ggsave("./data/sampplot.png", grid)
 
 ```
+## Introduction
+The utilization distribution (UD) is the probability density that gives an animal's relative frequency of occurrence 
 
-## METHODS
-We ascertained relationships between movement, habitat selection and landscape configuration by simulating telemetry data for an agent across a `r I(nrow)` by `r I(ncol)` domain of continuous habitat (ranging from 0 to 1; Figure 1). To test the relationships between these variables we stochastically changed variables controlling autocorrelation, agent habitat preference, thinning period (i.e., the number of samples that we threw out at the end of each simulation), and landscape autocorrelation.
+## Methods
+We examined relationships between movement, habitat selection and landscape configuration by simulating telemetry data for an agent across a `r I(nrow)` by `r I(ncol)` domain of continuous habitat (ranging from 0 to 1; Figure 1). To test the relationships between these variables we stochastically changed variables controlling autocorrelation, agent habitat preference, thinning period (i.e., the number of samples that we threw out at the end of each simulation), and landscape autocorrelation.
 
 ### Movement 
-For a given cell, $c$, the agent was programmed to only move to rook cells (i.e., those cells that shared more than one point with cell $c$) within one cell of $c$ or stay in the same cell. The likelihood of the agent moving from a cell $c$ to any of it's neighbors or to stay in the same cell is given by Equation 1. 
+For a given cell, $c$, the agent was programmed only to move to rook cells (i.e., the set of neighboring cells $c_n$ that shared more than one point with cell $c$) within one cell of $c$ or stay in the same cell. The likelihood of the agent moving from a cell $c$ to any of it's neighbors or to stay in the same cell is given by Equation 1. 
 
 $$
 p(c_{n}) \ = \ e^{-p + \theta(c_n)} \ (1)
@@ -532,15 +1078,17 @@ Since we wanted to simulate movement on a torus we utilized a mixture modular ar
 
 
 ### Landscape autocorrelation
-To smooth the landscape we first padded the `r I(nrow)` by `r I(ncol)` domain with cells side from the opposite side of the domain. The number of cells that we padded on each side correlated to the smoothing factor used. For example, for a smoothing factor of 3 we took 6 rows or columns from the opposite side and attached them to the domain. We then utilized the smoothing function *focal* from the R-package *terra* to take the average of the cells within a square moving window with size of the smoothing factor @hijmans_terraSpatialData2024. These cells were then averaged over a square with of size 3 (i.e., an area of 9 $units^2$). After smoothing the domain was cropped back to it's original size by removing the padded values. Once the landscape was smoothed and cropped the resultant domain was then range normalized to ensure that the only the arrangement and not the intensity of the values changed between smoothed landscapes.
+To smooth the landscape we padded the `r I(nrow)` by `r I(ncol)` domain with cells side from the opposite side of the domain. The number of cells that we padded on each side correlated to the smoothing factor used. For example, for a smoothing factor of 3 we took 6 rows or columns from the opposite side and attached them to the domain. We then utilized the smoothing function *focal* from the R-package *terra* to take the average of the cells within a square moving window with size of the smoothing factor @hijmans_terraSpatialData2024. These cells were then averaged over a square with of size 3 (i.e., an area of 9 $units^2$). After smoothing the domain was cropped back to it's original size by removing the padded cells. Once the landscape was smoothed and cropped the resultant domain was then range normalized to ensure that the only the arrangement and not the intensity of the values changed between smoothed landscapes.
 
 ### Thinning period
-To examine how our thinning period changed the we chose between a number of different thinning values ranging from 100 to 250. That is, for a thinning value of 100 we would throw out all but every 100^{th} step likewise for a thinning value of 250 we would trhow out all but every 250^{th} step.
+To examine how our thinning period changed the we chose between a number of different thinning values ranging from 100 to 250. That is, for a thinning value of 100 we would throw out all but every 100^{th} step likewise for a thinning value of 250 we would throw out all but every 250^{th} step.
 
 ### Modelling
 To retrieve the downstream selection coefficient ($\beta$) for a given habitat type $t$ the function $fit_issf$ from the R-package AMT @signerAnimalMovementTools2019. The equation to retrieve the downstream $\beta$ was a linear combination of the step length, the $log$ of the step length, and the habitat value associated with the cell at the end of the step.
 
 Coefficients were then taken from the fit model and new datasets were generated using the function $mvnorm$ from the R-packages MASS @venablesModernAppliedStatistics2002. These new $beta$ values were then used to generate new shape and scale parameters from AMT using the function $update_sl_distr$.
+
+Once the full UD was acquired we also fit a simple RSF to the used versus available points. We did this by assigning used cells a value of one and then binding them to all the cells in the domain and assigning them a value of zero. We then regressed these assigned binary values against the actual cell values to estimate our RSF.
 
 ## RESULTS
 
