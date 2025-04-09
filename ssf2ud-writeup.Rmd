@@ -178,6 +178,13 @@ checkTrackUD <- function(ud, track){
   }
   return(ud)
 }
+
+# allowing progress bar to be used in foreach -----------------------------
+progress <- function(n){
+  pb$tick(tokens = list(letter = progress_letter[n]))
+} 
+
+
 ```
 
 
@@ -190,9 +197,9 @@ startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
 smoothingFactorL <- c(1,3,5,7)
 nreps = 100
 ntraj <- 10
-lvars <- 10
+lvars <- 7
 sigmaSqEta <- 0.2
-nburnin <- 1000
+nburnin <- 10000
 drctnlPers <- 2
 drctnPrev <- 'stay'
 out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
@@ -233,14 +240,14 @@ if(!dir.exists(paste0(path, "/",domName))){
 }
 path <- paste0(path, "/", domName)
 # create and register worker nodes
-cl <- parallel::makeCluster(4)
+cl <- parallel::makeCluster(7)
 registerDoParallel(cl)
 
 thetas <- c(0,1,5,7,10)
 movePenalties <- rep(0.25, lvars)
 smoothingFactors <- rep(5,lvars)
-thinVals <- c(seq(100, 400, by = 100))
-#thinVals <- c(1, 2, 3, 4, 5)
+thinVals <- c(1,seq(50, 300, by = 50))
+
 ```
 
 
@@ -476,30 +483,31 @@ metaDat <- rbind(metaDat,cbind(
 ```{r generate UD stats, echo = FALSE, eval = FALSE}
 # SIMULATION -----------------------------------------------------------------
 simIter <- 1
-for(h in 3:3){
+for(h in 1:1){
   ud <- matrix(0, nrow = nrow, ncol = ncol)
   if(h == 1){
-    thetas <- c(0,1,2,3,4)
+    thetas <- c(0,0.5,1,1.5,2,2.5,3)
     movePenalties <- rep(0.25, lvars)
     smoothingFactors <- rep(3, lvars)
   }
   else if(h == 2){
-    thetas <- rep(1, lvars)
-    movePenalties <- c(0, 0.25, 0.5, 0.75, 1)
+    thetas <- rep(2, lvars)
+    movePenalties <- c(0, 0.25, 0.5, 0.75, 1, 1.25,1.5)
     smoothingFactors <- rep(3, lvars)
   }
   else if(h == 3){
     thetas <- rep(2, lvars)
-    movePenalties <- rep(0, lvars)
-    smoothingFactors <- c(0,1,2,3,4,5,6,7,8,9)
+    movePenalties <- rep(0.25, lvars)
+    smoothingFactors <- c(0,1,2,3,4,5,6)
   }
-  metaDat <- rbind(metaDat, foreach(i = 1:lvars, .combine = rbind) %dopar% {
+  metaDat <- rbind(metaDat, foreach(i = 1:lvars, .combine = rbind, .options.snow = opts) %dopar% {
   library(amt)
   library(tidyr)
   library(raster)
   library(terra)
   library(dplyr)
   library(MASS)
+  setTxtProgressBar(pb, i)
   landscape <- makeLandscapeMatrix(nrow = nrow, ncol = ncol)
   smoothingFactor <- smoothingFactors[i]
   movePen <- movePenalties[i] 
@@ -507,25 +515,22 @@ for(h in 3:3){
   id <- paste0(simIter, "-", theta, "-", smoothingFactor, "-", (movePen*100))
   if(smoothingFactor == 0){
     landscape_smooth <- landscape
-  }else if(smoothingFactor == 9){
-    landscape_smooth <- cbind(matrix(0, 100, 50), matrix(1.0, 100, 50))
   }
   else{
     pad <- createPaddedMatrix(landscape, smoothingFactor)
     landscape_smooth <- smoothPadMovingWindow(pad, smoothingFactor, nrow, ncol)
   }
-  #landscape_smooth <- cbind(matrix(0, 100, 50), matrix(1.0, 100, 50))
-  for(j in 1:6){
-    for(k in 1:6){
+  for(j in 1:nrow){
+    for(k in 1:ncol){
     # reset xyTrackDat
     xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 5))
     names(xyTrackDat) <- c("x.proj", "y.proj","x.real","y.real","t")
     startTime <- as.POSIXct("2016-11-07 00:00:00 UTC") # start time
-    # x.init <- k
-    # y.init <- j
+    x.init <- k
+    y.init <- j
     # # for random sampling
-    x.init <- sample(1:ncol, 1, replace = TRUE)
-    y.init <- sample(1:ncol, 1, replace = TRUE)
+    # x.init <- sample(1:ncol, 1, replace = TRUE)
+    # y.init <- sample(1:ncol, 1, replace = TRUE)
     # # get init location
     xyTrackDat[1,]$x.proj = x.init
     xyTrackDat[1,]$y.proj = y.init
@@ -557,7 +562,7 @@ for(h in 3:3){
     stay.real.x <-stay.x
     stay.real.y <-stay.y 
     
-    for(iter in 1:40000){
+    for(iter in 1:20000){
       # make decision
       currTime <- startTime
       up.x <- squishToSize(up.x)
