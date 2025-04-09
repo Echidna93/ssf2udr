@@ -19,6 +19,7 @@ library(ggplot2)
 library(doParallel) # for running foreach in parallel
 library(MASS) # for mvrnorm
 library(survival) # for CLOGIT
+library(remotes) # for installing non-CRAN libs with install_github
 library(cowplot) # for multipanel plots
 library(ggpubr) # for multipanel plots
 library(bootstrap) # for creating bootstrapped samples of betaISSF
@@ -1065,9 +1066,9 @@ ggplot(metaDat, aes(y = unlist(slctnCoff), x = unlist(smoothingFctr), color = fa
 ## Introduction
 Ecology is fundamentally the study of the factors which drive the arrangement of organisms over space and time @eltonAnimalEcology1927. As such a major concern for ecologists is quantifying this arrangement of species over space and time. Ecologists have tried to quantify this quantity in myriad ways over many decades of intensive study. 
 
-The utilization distribution (or home range; UD) is the probability density that gives an animal's relative frequency of occurrence @winkleComparisonSeveralProbabilistic1975. This quantity describes the probability that a given individual will be detected in a given location and thus is of vital importance to understanding the spatial distribution of living organisms. It has been utilized to help address issues ranging from wildlife disease @jennelleMovementWhitetailedDeer2022a to energy development @cervantesUtilizationDistributionGlobal2023.
+The utilization distribution (or home range; UD) is the probability density that gives an animal's relative frequency of occurrence @winkleComparisonSeveralProbabilistic1975. This quantity describes the probability that a given individual will be detected in a given location and thus is of vital importance to understanding the spatial distribution of living organisms. It has been utilized to help address conservation issues ranging from wildlife disease @jennelleMovementWhitetailedDeer2022a to energy development @cervantesUtilizationDistributionGlobal2023.
 
-To date quantifying a UD is mired by challenges that make them mathematically intractable for most practitioners, computationally expensive, or unreliable. For instance UDs can be readily quantified from systems of differential equations @barnettAnalyticSteadystateSpace2008a. However, these methodologies are not a tractable solution for many ecologists and practitioners. Alternatively quantifying a UD might also involve computationally demanding simulations. Alternatively it may also involve 
+To date quantifying a UD is mired by challenges that make them mathematically intractable for most practitioners, computationally expensive, or unreliable. For instance UDs can be readily quantified from systems of differential equations @barnettAnalyticSteadystateSpace2008a. However, these methodologies are not a tractable solution for many ecologists and practitioners. Alternatively quantifying a UD might also involve computationally demanding simulations which take long periods of time to reach ergodicity. Another alternative to scale up utilization distributions from Resource Selection Functions (RSAs). Another alternative is to simply estimate the UD utilizing a probabilistic or geometric approach @fiebergCouldYouPlease2012.
 
 The purpose of this paper is to identify a method for scaling up movement processes to describe patterns of space-use. First we present a method for scaling up movement parameters which can be readily ascertained from spatial and movement packages in program-R.
 
