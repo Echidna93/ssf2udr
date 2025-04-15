@@ -3,13 +3,13 @@ title: "ssf2ud-writeup"
 author: "alex jack"
 date: "2025-01-14"
 output:
+  pdf_document: default
   word_document:
-    # style from https://gsverhoeven.github.io/post/zotero-rmarkdown-csl/
     reference_docx: doc_style.docx
-bibliography: SSF2UD.json #https://www.zotero.org/styleshttps://www.zotero.org/styles
-csl: ecology.csl 
+bibliography: SSF2UD.json
+csl: ecology.csl
 ---
-```{r load packages, echo = FALSE, eval = FALSE}
+```{r load packages, echo = FALSE, warning=FALSE}
 library(terra)
 library(raster) # for ncell function
 library(amt)
@@ -22,9 +22,9 @@ library(survival) # for CLOGIT
 library(remotes) # for installing non-CRAN libs with install_github
 library(cowplot) # for multipanel plots
 library(ggpubr) # for multipanel plots
-library(bootstrap) # for creating bootstrapped samples of betaISSF
+#library(bootstrap) # for creating bootstrapped samples of betaISSF
 # remotes::install_github("paleolimbot/rbbt") # for zotero git interface
-library(rbibutils)
+#library(rbibutils)
 ```
 
 
@@ -66,16 +66,19 @@ rangeNormalize <- function(land){
 #' @param land matrix to smooth
 #' @export
 smooth_pad_terra <- function(pad, sf, land){
-  smooth <- terra::focal(rast(pad), w = sf, fun = "mean")
+  w <- raster::focalWeight(rast(pad), sf, type = "circle")
+  smooth <- terra::focal(rast(pad), w = w, fun = "mean")
+  
   smooth <- smooth[(sf + 1):(nrow(smooth) - sf),(sf + 1):(nrow(smooth) - sf)]
-  # smooth <- matrix(smooth$focal_mean, nrow = nrow(land), ncol = ncol(land))
+  smooth <- matrix(smooth$focal_mean, nrow = nrow(land), ncol = ncol(land))
   # smooth[smooth > mean(smooth)] <- 1
   # smooth[smooth <= mean(smooth)] <- 0
   rangeNormalize(matrix(as.vector(unlist(smooth)), nrow = nrow(land), ncol = ncol(land)))
 }
 
 smoothPadTerraDiscrete <- function(pad, sf, land){
-  smooth <- terra::focal(rast(pad), w = sf, fun = "mean",
+  w <- raster::focalWeight(rast(pad), sf, type = "circle")
+  smooth <- terra::focal(rast(pad), w = w, fun = "mean",
                          NAonly = TRUE, padValue = 0)
   smooth <- smooth[(sf + 1):(nrow(smooth) - sf),(sf + 1):(nrow(smooth) - sf)]
   smooth <- matrix(smooth$focal_mean, nrow = nrow(land), ncol = ncol(land))
@@ -106,6 +109,28 @@ getSubMatrix <- function(matrix, r, n) {
   return(square_matrix)
 }
 
+getSubMatrix <- function(mat, coords, sf){
+  row <- coords[1]
+  col <- coords[2]
+  subMatrix <- mat[(row - sf):(row+sf),(col - sf):(col + sf)]
+  # top left
+  subMatrix[1,1] <- NA
+  subMatrix[1,2] <- NA
+  subMatrix[2,1] <- NA
+  # # top right
+  subMatrix[nrow(subMatrix), nrow(subMatrix)] <- NA
+  subMatrix[nrow(subMatrix)-1, nrow(subMatrix)] <- NA
+  subMatrix[nrow(subMatrix), nrow(subMatrix)-1] <- NA
+  # # bottom left
+  subMatrix[1, nrow(subMatrix)] <- NA
+  subMatrix[2, nrow(subMatrix)] <- NA
+  subMatrix[1, nrow(subMatrix)-1] <- NA
+  # # bottom right
+  subMatrix[nrow(subMatrix)-1,1] <- NA
+  subMatrix[nrow(subMatrix),2] <- NA
+  subMatrix[nrow(subMatrix),1] <- NA
+  return(subMatrix)
+}
 
 createBootstrap <- function(smooths, thinVals, nboot, m){
   pops <- data.frame(matrix(NA, 0, 4))
@@ -155,8 +180,8 @@ smoothPadMovingWindow <- function(pad, sf, nrow, ncol){
   smooth <- matrix(0, nrow, ncol)
   for(i in 1:nrow(smooth)){
     for(j in 1:ncol(smooth)){
-     submatrix <- getSubMatrix(pad, c((i + sf), (j + sf)), ((2 * sf) + 1))
-        smooth[i,j] <- mean(submatrix)
+        subMatrix <- getSubMatrix(pad, c((i + sf), (j + sf)), sf)
+        smooth[i,j] <- mean(subMatrix)
       }
     }
   return(rangeNormalize(smooth))
@@ -178,12 +203,6 @@ checkTrackUD <- function(ud, track){
   }
   return(ud)
 }
-
-# allowing progress bar to be used in foreach -----------------------------
-progress <- function(n){
-  pb$tick(tokens = list(letter = progress_letter[n]))
-} 
-
 
 ```
 
@@ -251,7 +270,7 @@ thinVals <- c(1,seq(50, 300, by = 50))
 ```
 
 
-```{r generate single traj, echo = FALSE, eval = FALSE}
+```{r generate single traj2, echo = FALSE, eval = FALSE}
 # SIMULATION ---------------`----------------------------------------------------
 ud <- matrix(0, nrow 
              = nrow, ncol = ncol)
@@ -260,12 +279,12 @@ for(i in 1:1){
   movePen <- movePenalties[sample(1:lvars, 1, replace = TRUE)]
   theta <- thetas[sample(1:lvars, 1, replace = TRUE)]
   landscape_smooth <- makeLandscapeMatrixIncreasing(nrow, ncol)
-  # if(smoothingFactor == 1){
-  #   landscape_smooth <- landscape
-  # }else{
-  #   pad <- createPaddedMatrix(landscape, smoothingFactor)
-  #   landscape_smooth <- smooth_pad_terra(pad, smoothingFactor, landscape)
-  # }
+  if(smoothingFactor == 1){
+    landscape_smooth <- landscape
+  }else{
+    pad <- createPaddedMatrix(landscape, smoothingFactor)
+    landscape_smooth <- smooth_pad_terra(pad, smoothingFactor, landscape)
+  }
   l <- 1
   landscape_smooth <- cbind(matrix(0, 100, 50), matrix(1.0, 100, 50))
   # reset xyTrackDat
@@ -519,7 +538,7 @@ for(h in 1:1){
   else{
     pad <- createPaddedMatrix(landscape, smoothingFactor)
     landscape_smooth <- smoothPadMovingWindow(pad, smoothingFactor, nrow, ncol)
-  }
+  p}
   for(j in 1:nrow){
     for(k in 1:ncol){
     # reset xyTrackDat
@@ -741,7 +760,7 @@ metaDat <- rbind(metaDat,cbind(
 ```
 
 
-```{r generate single traj}
+```{r generate single traj, echo = FALSE, eval = FALSE}
 simIter <- 1
 for(h in 3:3){
   ud <- matrix(0, nrow = nrow, ncol = ncol)
@@ -1017,24 +1036,21 @@ lines(xyTrackDat, col = "red", lwd=2, xlim = c(0,50), ylim=c(0,50))
 #   geom_path(aes(color="red")) + scale_x_continuous(limits = c(1,ncol)) + scale_y_continuous(limits = c(1,nrow))
 
 # pivot on the data.frame 
-j <- landscape_smooth %>% as.data.frame() %>% rownames_to_column("Var1") %>% pivot_longer(-Var1, names_to = "Var2", values_to = "value") %>% mutate(
-Var1 = factor(Var1, levels = 1:ncol),
-Var2 = factor(gsub("V", "", Var2), levels = 1:nrow))
+j <- landscape_smooth %>%
+  as.data.frame() %>%
+  rownames_to_column("Var1") %>%
+  pivot_longer(-Var1, names_to = "Var2", values_to = "value") %>%
+  mutate(Var1 = factor(Var1, levels = 1:ncol),
+         Var2 = factor(gsub("V", "", Var2), levels = 1:nrow))
 
 # plot
-ggplot(j, aes(Var1, Var2,)) + geom_tile(aes(fill = value)) +
-  scale_fill_gradient(low = "white", high="black") +
-  geom_path(data = out.dat.filter, aes(x = x, y = y, color = "red")) +
-  geom_point(data = out.dat, aes(x = x, y = y, color = "pink"))
+ggplot(j, aes(Var1, Var2,)) + geom_raster(aes(fill = value))
 
 # plot on continuous domain
 out.dat$coord  <-  paste0("(", out.dat$xMod, ",", out.dat$yMod, ")")
-ggplot(j, aes(x = Var1, y = Var2,)) + 
-  facet_grid(~ coord) +   
+g <- ggplot(j, aes(x = Var1, y = Var2,)) + 
   geom_tile(aes(fill = value)) +
-  scale_fill_gradient(low = "white", high="black") +
-  geom_path(data = out.dat, aes(x = x, y = y, color = "red")) +
-  geom_point(data = out.dat, aes(x = x, y = y, color = "pink"))
+  scale_fill_gradient(low = "white", high="black") 
 
 
 
@@ -1069,9 +1085,12 @@ ggplot(metaDat, aes(y = unlist(slctnCoff), x = unlist(smoothingFctr), color = fa
 
 ```
 ## Introduction
-Ecology is fundamentally the study of the factors which drive the arrangement of organisms over space and time @eltonAnimalEcology1927. As such a major concern for ecologists is quantifying this arrangement of species over space and time. Ecologists have tried to quantify this quantity in myriad ways over many decades of intensive study. 
 
-The utilization distribution (or home range; UD) is the probability density that gives an animal's relative frequency of occurrence @winkleComparisonSeveralProbabilistic1975. This quantity describes the probability that a given individual will be detected in a given location and thus is of vital importance to understanding the spatial distribution of living organisms. It has been utilized to help address conservation issues ranging from wildlife disease @jennelleMovementWhitetailedDeer2022a to energy development @cervantesUtilizationDistributionGlobal2023.
+# first paragraph has to sell it
+
+Ecology is fundamentally the study of the factors which drive the arrangement of organisms over space and time @eltonAnimalEcology1927. Thus, ecologists have concocted numerous methods of quantifying and approximating this. One of the most popular concepts of animal space use or arrangement is that of a home range which is the area to which an organism restricts it's movements to carry out normal functioning @burtTerritorialityHomeRange1943.
+
+The utilization distribution (or home range; UD) is the probabilistic formulation of the home range concept and thus is of great importance in the field of ecology. This quantity describes the probability that a given individual will be detected in a given location  @winkleComparisonSeveralProbabilistic1975. It has been utilized to help address conservation issues ranging from wildlife disease @jennelleMovementWhitetailedDeer2022a to energy development @cervantesUtilizationDistributionGlobal2023. Utilization distributions can be broken up into two fundamental classes those that are used to describe observed patterns (occurence) and those used to predict (range; @horneAnimalHomeRanges2020).
 
 To date quantifying a UD is mired by challenges that make them mathematically intractable for most practitioners, computationally expensive, or unreliable. For instance UDs can be readily quantified from systems of differential equations @barnettAnalyticSteadystateSpace2008a. However, these methodologies are not a tractable solution for many ecologists and practitioners. Alternatively quantifying a UD might also involve computationally demanding simulations which take long periods of time to reach ergodicity. Another alternative to scale up utilization distributions from Resource Selection Functions (RSAs). Another alternative is to simply estimate the UD utilizing a probabilistic or geometric approach @fiebergCouldYouPlease2012.
 
