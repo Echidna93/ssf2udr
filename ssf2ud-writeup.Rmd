@@ -36,10 +36,6 @@ library(ggpubr) # for multipanel plots
 makeLandscapeMatrix <- function(nrow, ncol){
   matrix(runif(nrow*ncol, 0, 1), ncol = ncol, nrow = nrow)
 }
-makeLandscapeMatrixDiscrete <- function(nrow, ncol){
-  vals <- sample(x = c(0,1),size = nrow*ncol, replace = TRUE)
-  matrix(vals, ncol = nrow, nrow=nrow)
-}
 #' initiates a continuous landscape matrix with increasing habitat values
 #' (from left to right) between zero and one
 #' @param nrow number of rows in matrix
@@ -74,62 +70,6 @@ smooth_pad_terra <- function(pad, sf, land){
   # smooth[smooth > mean(smooth)] <- 1
   # smooth[smooth <= mean(smooth)] <- 0
   rangeNormalize(matrix(as.vector(unlist(smooth)), nrow = nrow(land), ncol = ncol(land)))
-}
-
-smoothPadTerraDiscrete <- function(pad, sf, land){
-  w <- raster::focalWeight(rast(pad), sf, type = "circle")
-  smooth <- terra::focal(rast(pad), w = w, fun = "mean",
-                         NAonly = TRUE, padValue = 0)
-  smooth <- smooth[(sf + 1):(nrow(smooth) - sf),(sf + 1):(nrow(smooth) - sf)]
-  smooth <- matrix(smooth$focal_mean, nrow = nrow(land), ncol = ncol(land))
-  smooth[smooth > mean(smooth)] <- 1
-  smooth[smooth <= mean(smooth)] <- 0
-  matrix(as.vector(unlist(smooth)), nrow = nrow(land), ncol = ncol(land))
-}
-
-# Function to get a square of size n around a point (r) in a matrix
-getSubMatrix <- function(matrix, r, n) {
-  # r is a vector (row, col), n is the side length of the square
-  row <- r[1]
-  col <- r[2]
-  
-  # Calculate half the size of the square (for symmetry)
-  half_n <- floor(n / 2)
-  
-  # Calculate the range of rows and columns to extract
-  row_start <- max(1, row - half_n)
-  row_end <- min(nrow(matrix), row + half_n)
-  
-  col_start <- max(1, col - half_n)
-  col_end <- min(ncol(matrix), col + half_n)
-  
-  # Extract the submatrix (the square) around the point
-  square_matrix <- matrix[row_start:row_end, col_start:col_end]
-  
-  return(square_matrix)
-}
-
-getSubMatrix <- function(mat, coords, sf){
-  row <- coords[1]
-  col <- coords[2]
-  subMatrix <- mat[(row - sf):(row+sf),(col - sf):(col + sf)]
-  # top left
-  subMatrix[1,1] <- NA
-  subMatrix[1,2] <- NA
-  subMatrix[2,1] <- NA
-  # # top right
-  subMatrix[nrow(subMatrix), nrow(subMatrix)] <- NA
-  subMatrix[nrow(subMatrix)-1, nrow(subMatrix)] <- NA
-  subMatrix[nrow(subMatrix), nrow(subMatrix)-1] <- NA
-  # # bottom left
-  subMatrix[1, nrow(subMatrix)] <- NA
-  subMatrix[2, nrow(subMatrix)] <- NA
-  subMatrix[1, nrow(subMatrix)-1] <- NA
-  # # bottom right
-  subMatrix[nrow(subMatrix)-1,1] <- NA
-  subMatrix[nrow(subMatrix),2] <- NA
-  subMatrix[nrow(subMatrix),1] <- NA
-  return(subMatrix)
 }
 
 createBootstrap <- function(smooths, thinVals, nboot, m){
@@ -174,17 +114,6 @@ createPaddedMatrix <- function(land, sf){
   # right
   pad_land[(sf + 1):(ncol(pad_land) - sf),(ncol(pad_land) - sf + 1):(ncol(pad_land))]  <- land[,1:sf]
   pad_land
-}
-
-smoothPadMovingWindow <- function(pad, sf, nrow, ncol){
-  smooth <- matrix(0, nrow, ncol)
-  for(i in 1:nrow(smooth)){
-    for(j in 1:ncol(smooth)){
-        subMatrix <- getSubMatrix(pad, c((i + sf), (j + sf)), sf)
-        smooth[i,j] <- mean(subMatrix)
-      }
-    }
-  return(rangeNormalize(smooth))
 }
 
 squishToSize <- function(dir){
@@ -537,7 +466,7 @@ for(h in 1:1){
   }
   else{
     pad <- createPaddedMatrix(landscape, smoothingFactor)
-    landscape_smooth <- smoothPadMovingWindow(pad, smoothingFactor, nrow, ncol)
+    landscape_smooth <- smooth_pad_terra(pad, smoothingFactor, landscape)
   p}
   for(j in 1:nrow){
     for(k in 1:ncol){
