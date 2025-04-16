@@ -572,13 +572,14 @@ for(h in 1:3){
     }
     # ANALYSIS ------s-------------------------------------------------------------
     # thin the movement dataset
-    xyTrackDat2 <- xyTrackDat
+    #xyTrackDat2 <- xyTrackDat
+    xyTrackDat <- xyTrackDat[nburnin:nrow(xyTrackDat),]
     xyTrackDat2$trajID <- trajID
     # fit RSF
     if(!dir.exists(paste0(path, "/",domName))){
       dir.create(paste0(path, "/", id)) # create dir
     }
-    write.table(xyTrackDat2, paste0(path,"/", id, "/", "traj"), sep = ",", append = TRUE, col.names = !file.exists(paste0(path,"/", id, "/", "traj")))
+    write.table(xyTrackDat, paste0(path,"/", id, "/", "traj"), sep = ",", append = TRUE, col.names = !file.exists(paste0(path,"/", id, "/", "traj")))
       trajID <- trajID + 1
       }
     }
