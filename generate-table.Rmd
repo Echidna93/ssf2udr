@@ -1,0 +1,441 @@
+---
+title: "ssf2ud-writeup"
+author: "alex jack"
+date: "2025-01-14"
+output:
+  word_document:
+    reference_docx: doc_style.docx
+  pdf_document: default
+bibliography: SSF2UD.json
+csl: ecology.csl
+---
+
+```{r load packages, echo = FALSE, warning = FALSE, message = FALSE}
+library(terra)
+library(raster) # for ncell function
+library(amt)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(doParallel) # for running foreach in parallel
+library(MASS) # for mvrnorm; fitdistr
+library(survival) # for CLOGIT
+library(remotes) # for installing non-CRAN libs with install_github
+library(cowplot) # for multipanel plots
+library(ggpubr) # for multipanel plots
+library(raster) # for writeRaster function
+library(circular) # for fitting vonmises dist
+library(pracma) # cross product
+#library(bootstrap) # for creating bootstrapped samples of betaISSF
+# remotes::install_github("paleolimbot/rbbt") # for zotero git interface
+#library(rbibutils)
+# for creating temp tables
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(webshot)
+
+
+
+```
+
+```{r helper functions, echo = FALSE}
+#' initiates a continous landscape matrix with habitat values between 0 and 1
+#' @param nrow number of rows in matrix
+#' @param ncol number of columns in matrix
+#' @export
+makeLandscapeMatrix <- function(nrow, ncol){
+  matrix(runif(nrow*ncol, 0, 1), ncol = ncol, nrow = nrow)
+}
+#' initiates a continuous landscape matrix with increasing habitat values
+#' (from left to right) between zero and one
+#' @param nrow number of rows in matrix
+#' @param ncol number of columns in matrix
+#' @export
+makeLandscapeMatrixIncreasing <- function(nrow, ncol){
+  # make landscape of size nrow*ncol with values of 0
+  m <- matrix(sample(0, nrow*ncol, replace = TRUE), nrow = nrow, ncol = ncol)
+  j <- 1 # iterator
+  for(i in seq(ncol,((ncol*nrow) - ncol), by = ncol)){
+    m[(i + 1):(i+ncol)] <- j * 0.02
+    j <- j + 1
+  }
+  m
+}
+
+rangeNormalize <- function(land){
+  return((land - min(land))/(max(land) - min(land)))
+}
+
+# smooths by the padded matrix by a factor sf using the terra::focal function
+#' @param pad padded matrix
+#' @param sf smoothing factor; size of focal window
+#' @param land matrix to smooth
+#' @export
+smooth_pad_terra <- function(pad, sf, land){
+  w <- raster::focalWeight(rast(pad), sf, type = "circle")
+  smooth <- terra::focal(rast(pad), w = w, fun = "mean")
+  
+  smooth <- smooth[(sf + 1):(nrow(smooth) - sf),(sf + 1):(nrow(smooth) - sf)]
+  smooth <- matrix(smooth$focal_mean, nrow = nrow(land), ncol = ncol(land))
+  # smooth[smooth > mean(smooth)] <- 1
+  # smooth[smooth <= mean(smooth)] <- 0
+  rangeNormalize(matrix(as.vector(unlist(smooth)), nrow = nrow(land), ncol = ncol(land)))
+}
+
+createBootstrap <- function(smooths, thinVals, nboot, m){
+  pops <- data.frame(matrix(NA, 0, 4))
+  names(pops) <- c("betaISSF", "smoothingFctr", "nThin", "moransI")
+  for(i in 1:length(smooths)){
+    for(j in 1:length(thinVals)){
+      for(k in 1:nboot){
+      population <- metaDat[which(metaDat$smoothingFctr == smooths[i] & metaDat$nThin == thinVals[j]),]$betaISSF
+      pop.morans <- metaDat[which(metaDat$smoothingFctr == smooths[i] & metaDat$nThin == thinVals[j]),]$moransI
+      nobs <- length(population)
+      bootdat <- population[sample(1:nobs, nobs, replace=TRUE)]
+      boot.moran <- pop.morans[sample(1:nobs, nobs, replace=TRUE)] 
+      pops <- rbind(pops, cbind(mean(bootdat), smooths[i], thinVals[j], mean(boot.moran)))
+      }
+    }
+  }
+  return(pops)
+}
+# creates a matrix which is padded by 2x the smoothing function 
+# on each side of the original domain
+#' @param land the original matrix
+#' @param sf the number of rows to pad by
+#' @export
+createPaddedMatrix <- function(land, sf){
+  pad_land <- matrix(NA, nrow(land) + 2*sf, ncol(land) + 2*sf)
+  pad_land[(sf + 1):(nrow(land) + sf), (sf + 1):(ncol(land) + sf)] <- land
+  # top left
+  pad_land[1:sf, 1:sf] <- land[(nrow(land)-sf + 1):nrow(land), (ncol(land)-(sf ) + 1):ncol(land)]
+  # top right
+  pad_land[1:sf, (nrow(pad_land) - sf + 1):(nrow(pad_land))] <- land[(nrow(land)-sf + 1):nrow(land), 1:sf] 
+  # bottom left
+  pad_land[(nrow(pad_land) - sf + 1):(nrow(pad_land)), 1:sf] <- land[1:sf, (ncol(land) - sf + 1):ncol(land)]
+  # bottom right
+  pad_land[(nrow(pad_land)- sf + 1):(nrow(pad_land)), (nrow(pad_land) - sf + 1):(nrow(pad_land))] <- land[1:sf, 1:sf]
+  # bottom row
+  pad_land[(nrow(pad_land)-sf + 1):nrow(pad_land), (sf + 1):(ncol(pad_land) - sf)] <- land[1:sf,]
+  # top row
+  pad_land[1:sf, (sf + 1):(ncol(pad_land) - sf)] <- land[(nrow(land) - sf + 1):nrow(land),]
+  # left
+  pad_land[(sf + 1):(ncol(pad_land) - sf),1:sf] <- land[,(nrow(land) - sf + 1):nrow(land)]
+  # right
+  pad_land[(sf + 1):(ncol(pad_land) - sf),(ncol(pad_land) - sf + 1):(ncol(pad_land))]  <- land[,1:sf]
+  pad_land
+}
+
+squishToSize <- function(dir, ncol){
+  if(dir > ncol){
+    return(dir - ncol)
+  }
+  else if(dir <= 0){
+    return(dir + ncol)
+  }
+  return(dir)
+}
+checkTrackUD <- function(realizations, nrow, ncol){
+  ud <- matrix(0, nrow = nrow, ncol = ncol)
+  trajIDs <- unique(realizations$trajID)
+  denom <- 0
+  for(i in 1:length(trajIDs)){
+    realization <- realizations %>% filter(trajID == trajIDs[i]) 
+    realization <- realization[1:(1e4),]
+    denom <- denom + nrow(realization)
+    for(j in 1:nrow(realization)){
+    ud[realization[j,]$x.proj, realization[j,]$y.proj] <- ud[realization[j,]$x.proj, realization[j,]$y.proj] + 1
+    }
+  }
+  return(ud/denom)
+}
+
+getTA <- function(l1, l2){
+  # compute direction vectors
+  v1 <- c((l1$x_2 - l1$x_1), (l1$y_2 - l1$y_1))
+  v2 <- c((l2$x_2 - l2$x_1), (l2$y_2 - l2$y_1))
+  dotProd <- sum(v1*v2)
+  crossProd <- v1[1]*v2[2] - v1[2]*v2[1]
+  v1Norm <- sqrt(sum(v1^2))
+  v2Norm <- sqrt(sum(v2^2))
+  rad <- atan2(crossProd,dotProd)
+  return(rad)
+}
+# get euclidean distance between two points
+getDist <- function(pt1, pt2){
+  return(sqrt(sum((pt1 - pt2)^2)))
+}
+
+```
+
+```{r constants, echo = FALSE}
+# CONSTANTS ----------------------------------------------------
+nrow <- 100
+ncol <- 100
+nsims <- nrow*ncol
+n_control <- 30 # number of random steps to generate
+startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
+lvars <- 7
+sigmaSqEta <- 0.2
+nburnin <- 10000
+sampSize <- 100 # size of sample from each partition
+deltas <- c(50,seq(100, 2000, by = 100))
+trajID <- 1 # tracks the trajectory number 
+out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
+# create ID for the replicate
+# replicate - smoothingFactor - beta
+names(out.dat) <- c("t",
+                    "cell",
+                    "xMod",
+                    "yMod")
+# metaDat holds data on regression coefficents
+metaDat  <- data.frame(matrix(nrow = 0, ncol = 8))
+
+names(metaDat) <- c("id",
+                    "theta", # beta1 is the assigned coeff
+                    "betaISSF", # selection coeff is the retrieved from regression
+                    "sl_obs", 
+                    "smoothngFctr",
+                    "moransI",
+                    "movePenalty",
+                    "delta"
+)
+# for testing
+xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 2))
+
+names(xyTrackDat) <- c("x", "y")
+# set up file directory
+path <- "./data/output" # main file path
+# make the domain dir
+domName <- paste("domain", ncol, "by", nrow, sep = "-")
+if(!dir.exists(paste0(path, "/",domName))){
+  dir.create(paste0(path, "/", domName)) # create dir
+}
+path <- paste0(path, "/", domName)
+# create and register worker nodes
+cl <- parallel::makeCluster(7)
+registerDoParallel(cl)
+
+```
+```{r analysis, echo = FALSE, eval = FALSE}
+# get base path
+basePath <- "./data/output/domain-100-by-100"
+# get folder names in base path
+folders <- list.files(path = basePath, recursive = FALSE)
+folders <- folders[c(14,15)]
+nfolders <- length(folders)
+
+# step thru each folder name
+# metaDat <- rbind(metaDat, foreach(f = 1:nfolders, .combine = rbind) %dopar% {
+for(f in 1:nfolders){
+  library(terra)
+  library(raster) # for ncell function
+  library(amt)
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(doParallel) # for running foreach in parallel
+  library(MASS) # for mvrnorm; fitdistr
+  library(survival) # for CLOGIT
+  library(remotes) # for installing non-CRAN libs with install_github
+  library(cowplot) # for multipanel plots
+  library(ggpubr) # for multipanel plots
+  library(raster) # for writeRaster function
+  library(circular) # for fitting vonmises dist
+  library(pracma) # cross product
+
+  # extract parameters from folder name
+  # n.b., id = simIter - theta*10 - smoothingFactor - movePen*100
+  folder <- folders[f]
+  idString <- strsplit(x = folder, split =  "-")[[1]]
+  simIter <- idString[1] # simIter
+  theta <- as.numeric(idString[2]) / 10 # habitat preference
+  smoothingFactor <- as.numeric(idString[3]) # rho
+  movePen <- as.numeric(idString[4]) / 100 # mu 
+  # read in data
+  realizations <- read.table(paste0(basePath,"/", folder, "/", "traj"),header=TRUE, sep=",", row.names=NULL) # ud
+   # read in landscape; convert to matrix
+  land <- terra::rast(x = paste0(basePath,"/", folder, "/", "ls.tif"))
+  realIDs <- unique(realizations$trajID) # get the realization IDs
+  
+  # form list of pairs
+  upper <- realIDs[which(realIDs %% 100 == 0)]
+  lower <- upper + 1
+  lower <- c(1, lower[-c(length(lower))])
+  limits <- data.frame(lower = lower, upper = upper)
+  for(i in 1:nrow(limits)){
+    seq <- seq(limits[i,]$lower, limits[i,]$upper, by = 1) # form sequence from pairs
+    partition <- realizations %>% filter(trajID %in% seq) # grab a partition
+    partition$rowID <- seq(1, nrow(partition), by = 1)
+    for(j in 1:length(deltas)){
+    #   subset <- partition[which(partition$rowID %% deltas[i] == 0),] # form subset from partition
+      partTrajIDs <- unique(partition$trajID)
+      startIndxs <- c()
+      for(k in 1:length(partTrajIDs)){
+        realization <- partition %>% filter(trajID == partTrajIDs[k])
+        startIndxs <- c(startIndxs, realization[1,]$rowID)
+      }
+      # grab the trk
+      starts <- partition[startIndxs,] 
+      ends <- partition[startIndxs + deltas[j],]
+      trajectory <- rbind(starts, ends) %>% arrange(rowID)
+      # # REAL TRACK
+  ## get sls from real track
+      #trajectory$t <- seq(1, 100, by = 1)
+      trk.real <- tibble(x_ = trajectory$x.real, y_ = trajectory$y.real,
+                         t_ = trajectory$rowID)
+    
+      # generate sequence of burst ids
+      bursts <- rep(seq(1, nrow(trk.real)/2, by = 1),2) 
+      # sort it into c(1,1,2,2,3,3,...,) format
+      bursts <- sort(bursts)
+      trk.real$burst_ <- bursts
+      trk.real$x_ <- trk.real$x_ + rnorm(nrow(trk.real), 0, 0.001)
+      trk.real$y_ <- trk.real$y_ + rnorm(nrow(trk.real), 0, 0.001)
+      # pivot the trk to wide format
+    trk.real <- trk.real %>%
+    group_by(burst_) %>%
+    mutate(row = row_number()) %>%
+    ungroup()
+
+# Pivot to wide format
+      trk.real <- trk.real %>%
+    pivot_wider(
+        names_from = row,
+        values_from = c(x_, y_, t_),
+        names_sep = ""
+    )
+      trk.real$ta_ <- NA
+      trk.real$sl_ <- NA
+      for(k in 1:nrow(trk.real)){
+        trk.real[k,]$sl_ <- getDist(c(trk.real[k,]$x_1, trk.real[k,]$y_1), c(trk.real[k,]$x_2, trk.real[k,]$y_2))
+      }
+      for(k in 2:nrow(trk.real)){
+        trk.real[k,]$ta_ <- getTA(trk.real[k-1,], trk.real[k,])
+      }
+      # PROJECTED TRACK
+        trk.proj <- tibble(x_ = trajectory$x.proj, y_ = trajectory$y.proj,
+                         t_ = trajectory$rowID)
+    
+      # add gaussian noise
+      trk.proj$burst_ <- bursts
+      trk.proj <- trk.proj %>%
+    group_by(burst_) %>%
+    mutate(row = row_number()) %>%
+    ungroup()
+
+# Pivot to wide format
+      trk.proj <- trk.proj %>%
+    pivot_wider(
+        names_from = row,
+        values_from = c(x_, y_, t_),
+        names_sep = ""
+    )
+      
+      trk.proj$sl_ <- trk.real$sl_ # add real sls back
+
+      # fit tentative sl_distr
+      slTent <- MASS::fitdistr(trk.real$sl_, "gamma")
+      # generate random values 
+      randSteps <- rgamma(1e5, slTent$estimate['shape'], rate = slTent$estimate['rate'])
+      # fit tentative ta_distr
+      vonMises <- circular::mle.vonmises(trk.real$ta_)
+      # grab mu 
+      mu <- vonMises$mu[[1]]
+      kappa <- vonMises$kappa
+      # generate 1e5 random values from the tentative distributoin
+      randTas <- rvonmises(1e5, mu, kappa)
+      for(k in 1:nrow(trk.proj)){
+        # get tentative sl
+        
+        slr <- sample(randSteps, n_control, replace = TRUE)
+        tar <- sample(randTas, n_control, replace = TRUE)
+        new.x <- trk.proj[k,]$x_1 + slr * cos(tar)
+        new.y <- trk.proj[k,]$y_1 + slr * sin(tar)
+        if(k == 1){
+        out <- cbind(trk.proj[k,]$burst_, trk.proj[k,]$x_1, trk.proj[k,]$y_1, new.x, new.y, slr, case_ = FALSE)
+        }else{
+        out <- rbind(out, cbind(stps.proj[k,]$burst_, trk.proj[k,]$x_1, trk.proj[k,]$y_1, new.x, new.y, slr, case_ = FALSE))
+        }
+      }
+      colnames(out) <- c("burst_","x_1", "y_1", "x_2", "y_2", "sl_", "case_")
+      stps <- trk.proj %>% dplyr::select(burst_, x_1, y_1, x_2, y_2, sl_) %>% mutate(case_ = TRUE)
+      stps <- rbind(stps, out)
+      stps <- data.frame(stps) %>% arrange(burst_)
+      
+      # squash steps outside the domain back in
+      for(l in 1:nrow(stps)){
+        if(stps[l,]$x_2 > 100 || stps[l,]$y_2 > 100){
+          print(stps[l,])
+        }
+        stps[l,]$x_2 <- squishToSize(stps[l,]$x_2, ncol) # row
+        stps[l,]$y_2 <- squishToSize(stps[l,]$y_2, ncol) # row
+      }
+      # for(l in 1:nrow(stps)){
+      #   stps[l,]$x_2 <- squishToSize(stps[l,]$x_2, ncol) # row
+      #   stps[l,]$y_2 <- squishToSize(stps[l,]$y_2, ncol) # row
+      # }
+      
+      # need to project the zeros back to ncol
+      # stps$x_2 <- if_else(stps$x_2 < 1, ncol, stps$x_2)
+      # stps$y_2 <- if_else(stps$y_2 < 1, ncol, stps$y_2)
+      # 
+      stps$land <- land[cbind(stps$x_2, stps$y_2)]$lyr.1
+      stps <- stps %>% mutate(log_sl_ = log(sl_))
+      
+      # fit ISSF
+       modISSA <- survival::clogit(case_ ~ log_sl_ + sl_ + land + strata(burst_), stps)
+       
+      # get the dist
+      shape <- slTent$estimate['shape']
+      scale <- 1/slTent$estimate['rate']
+      new_shape <- shape + modISSA$coefficients['log_sl_']
+      new_scale <- 1/((1/scale) - modISSA$coefficients['sl_'])
+      empirical_sl_ <- new_shape * new_scale
+      # # grab sl_ and log_sl_ distr
+      #norms <- mvrnorm(sampSize, cbind(modISSA$model$coefficients['log_sl_'],
+      #                               modISSA$model$coefficients['sl_']),
+      #              vcov(modISSA$model)[1:2, 1:2])
+      #scale <- update_sl_distr(modISSA, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$scale
+      # shape <- update_sl_distr(modISSA, log_sl_ = norms[1:nrow(norms), 1], sl_ = norms[1:nrow(norms), 2])$params$shape
+    metaDat <- rbind(metaDat,cbind(
+      theta = theta,
+      betaISSF = unlist(modISSA$coefficients[3]), # grab LS regression coefficient
+      sl_obs_ = empirical_sl_,
+      smoothingFctr = unlist(smoothingFactor),
+      moransI = unlist(Moran(raster(land))),
+      movePenalty = unlist(movePen),
+      delta = deltas[j]))
+    }
+  }
+}
+# return(metaDat)})
+# write metaDat raw
+write.table(metaDat,"C:/Users/jackx022/Desktop/SSF2UD-main/data/metaDat-raw", sep = ",", append = TRUE, col.names = !file.exists("C:/Users/jackx022/Desktop/SSF2UD-main/data/metaDat-raw"))
+```
+```{r generate metatable}
+    m <- metaDat %>% group_by(theta, smoothingFctr, movePenalty, delta) %>% 
+    summarise(smoothingFctr = unique(smoothingFctr),
+                theta = unique(theta),
+    minBetaISSF = quantile(as.numeric(betaISSF), 0.025),
+    meanBetaISSF = quantile(as.numeric(betaISSF), 0.5),
+    maxBetaISSF = quantile(as.numeric(betaISSF), 0.975),
+    minSlObs = quantile(as.numeric(sl_obs_), 0.025),
+    meanSlObs = quantile(as.numeric(sl_obs_), 0.5),
+    maxSlObs = quantile(as.numeric(sl_obs_), 0.975),
+    .groups = 'drop')
+
+# generate table using sjplot
+
+write.table(m,"C:/Users/jackx022/Desktop/SSF2UD-main/data/metaDat-f", sep = ",", append = TRUE, col.names = !file.exists("C:/Users/jackx022/Desktop/SSF2UD-main/data/metaDat-f"))
+```
+
+```{r generate table}
+m <- read.table("./data/metaDat-f", sep = ",")
+m <- m %>% dplyr::select(theta, smoothingFctr, movePenalty, delta, minBetaISSF, meanBetaISSF, maxBetaISSF, minSlObs, meanSlObs, maxSlObs) %>% arrange(theta, smoothingFctr, movePenalty)
+col_head <- c("\u03b8", "\u03c1","\u03bc","\u0394","0.025(\u03b2)","0.5 (\u03b2)","0.975 (\u03b2)","0.025 (\u03b4)","0.5 (\u03b4)","0.975 (\u03b4)")
+tab_df(m, col.header = col_head, alternate.rows =  T, file="./data/metaDat.html")
+webshot("./data/metaDat.html", "./data/metaDat.png")
+```
+

@@ -1,0 +1,70 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r load packages}
+library(ggplot2)
+library(terra)
+```
+```{r load folders}
+basePath <- "./data/output/domain-100-by-100"
+folders <- list.files(path = basePath, recursive = FALSE)
+```
+```{r read files}
+for (f in seq_along(folders)){
+  folder <- folders[f]
+  idString <- strsplit(x = folder, split =  "-")[[1]]
+  simIter <- idString[1]
+  theta <- as.numeric(idString[2]) / 10
+  smoothingFactor <- as.numeric(idString[3])
+
+  rLand <- terra::rast(paste0(basePath, "/", folder, "/ls.tif"))
+  rLandDF <- as.data.frame(rLand, xy = TRUE)
+  names(rLandDF) <- c("x", "y", "value")
+  
+# Plot using ggplot2 with greyscale
+plot <- ggplot(rLandDF, aes(x = x, y = y, fill = value)) +
+  geom_raster() +
+  scale_fill_gradient(low = "black", high = "white") +
+  coord_equal() +
+  theme_minimal() +
+  annotate(
+    "label",
+    x = min(rLandDF$x), y = max(rLandDF$y),  # Position: upper-left
+    label = paste0('\u03C1', " = ", smoothingFactor),  # Example with β = 0.5
+    hjust = 0, vjust = 1,
+    fill = "white", color = "black", label.size = 0.25
+  )
+  ggsave(paste0(basePath, "/", folders[f], "/", "ls.png"), plot)
+
+}
+```
+
+```{r generate UD plots}
+
+for (f in seq_along(folders)){
+  folder <- folders[f]
+  ud <- terra::rast(paste0(basePath, "/", folder, "/ud.tif"))
+  idString <- strsplit(x = folder, split =  "-")[[1]]
+  simIter <- idString[1]
+  theta <- as.numeric(idString[2])
+  smoothingFactor <- as.numeric(idString[3])
+  values(ud) <- values(ud)/(1e4*1e4)
+  udDF <- as.data.frame(ud, xy = TRUE)
+  names(udDF) <- c("x", "y", "value")
+
+plot <- ggplot(udDF, aes(x = x, y = y, fill = value)) +
+  geom_raster() +
+  scale_fill_gradient(low = "black", high = "white") +
+  coord_equal() +
+  theme_minimal() +
+  ggtitle( label = paste0('\u03C1', " = ", smoothingFactor, ";", " \u0398", " = ", theta)) 
+  ggsave(paste0(basePath, "/", folders[f], "/", "ud.png"), plot)
+
+}
+
+```
+
+
+

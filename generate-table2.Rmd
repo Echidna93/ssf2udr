@@ -1,0 +1,445 @@
+---
+title: "generate-table2"
+output: html_document
+date: "2025-05-22"
+---
+
+
+```{r helper functions, echo = FALSE}
+generateRandomSteps <- function(trk_real, randSteps, randTas, n_control) {
+  n_obs <- nrow(trk_real)
+  n_total <- n_obs * n_control
+  
+  # Repeat observed start points for each control step
+  start_x <- rep(trk_real$x_1, each = n_control)
+  start_y <- rep(trk_real$y_1, each = n_control)
+  burst_ids <- rep(trk_real$burst_, each = n_control)
+  
+  # Sample random step lengths and turning angles
+  sampled_sl <- sample(randSteps, n_total, replace = TRUE)
+  sampled_ta <- sample(randTas, n_total, replace = TRUE)
+  
+  # Generate new x and y coordinates
+  new_x <- start_x + sampled_sl * cos(sampled_ta)
+  new_y <- start_y + sampled_sl * sin(sampled_ta)
+  
+  # Build control step data frame
+  control_steps <- data.frame(
+    burst_ = burst_ids,
+    x_1 = start_x,
+    y_1 = start_y,
+    x_2 = new_x,
+    y_2 = new_y,
+    sl_ = sampled_sl,
+    case_ = FALSE
+  )
+  
+  return(control_steps)
+}
+
+
+getTA <- function(x1_prev, y1_prev, x2_prev, y2_prev, x1, y1, x2, y2) {
+  # Create vectors
+  v1x <- x2_prev - x1_prev
+  v1y <- y2_prev - y1_prev
+  v2x <- x2 - x1
+  v2y <- y2 - y1
+
+  dot <- v1x * v2x + v1y * v2y
+  cross <- v1x * v2y - v1y * v2x
+  atan2(cross, dot)
+}
+
+# get euclidean distance between two points
+getDist <- function(pt1, pt2){
+  return(sqrt(sum((pt1 - pt2)^2)))
+}
+
+```
+
+```{r constants, echo = FALSE}
+library(doParallel)
+# CONSTANTS ----------------------------------------------------
+nrow <- 100
+ncol <- 100
+nsims <- nrow*ncol
+n_control <- 30 # number of random steps to generate
+startTime <- as.POSIXct("2016-11-07 00:00:00 UTC")
+lvars <- 7
+sigmaSqEta <- 0.2
+nburnin <- 10000
+sampSize <- 100 # size of sample from each partition
+deltas <- c(seq(100,2000, by = 100))
+trajID <- 1 # tracks the trajectory number 
+out.dat <- data.frame(matrix(nrow = 0, ncol = 4))
+# create ID for the replicate
+# replicate - smoothingFactor - beta
+names(out.dat) <- c("t",
+                    "cell",
+                    "xMod",
+                    "yMod")
+# metaDat holds data on regression coefficents
+metaDat <- data.frame(matrix(nrow = 0, ncol = 7))
+
+names(metaDat) <- c("id",
+                    "theta", # beta1 is the assigned coeff
+                    "betaISSF", # selection coeff is the retrieved from regression
+                    "sl_obs", 
+                    "smoothngFctr",
+                    "movePenalty",
+                    "delta"
+)
+# for testing
+xyTrackDat <- data.frame(matrix(NA, nrow = 0, ncol = 2))
+
+names(xyTrackDat) <- c("x", "y")
+# set up file directory
+path <- "./data/output" # main file path
+# make the domain dir
+domName <- paste("domain", ncol, "by", nrow, sep = "-")
+if(!dir.exists(paste0(path, "/",domName))){
+  dir.create(paste0(path, "/", domName)) # create dir
+}
+path <- paste0(path, "/", domName)
+
+path <- paste0(path, "/", domName)
+# create and register worker nodes
+n_cores <- parallel::detectCores()
+
+# Optionally leave 1 core free for the OS
+n_workers <- max(1, n_cores - 20)
+
+# Set up the cluster
+cl <- makeCluster(n_workers)
+
+registerDoParallel(cl)
+```
+
+```{r convert trajs to binary}
+library(arrow)
+library(prioritzr)
+library(data.table)
+basePath <- "./data/output/domain-100-by-100"
+folders <- list.files(path = basePath, recursive = FALSE)
+folders <- folders[4:length(folders)]
+foreach(i = seq_len(nrow(controls))) %dopar%  {
+  folder <- folders[f]
+  realizations <- f.read(paste0(basePath, "/", folder, "/traj"), header = TRUE, sep = ",", row.names = NULL)
+  # Once: convert to Arrow format
+  write_parquet(realizations, paste0(basePath, "/", folder, "/traj.parquet"))
+  rm(realizations)
+  gc()
+}
+```
+
+
+
+```{r analysis}
+
+library(data.table)
+basePath <- "./data/output/domain-100-by-100"
+folders <- list.files(path = basePath, recursive = FALSE)
+# discrete case only
+folders <- folders[which(grepl("-d",folders))]
+results_list <- vector("list", length = length(folders))
+delta_results <- list()
+buffSize <- 10
+buffCount <- 0
+foreach(f = seq_along(folders)) %dopar% {
+  library(dplyr)
+  library(tidyr)
+  library(terra)
+  library(survival)
+  library(circular)
+  library(MASS)
+  library(spdep)
+  library(data.table)
+  folder <- folders[f]
+  idString <- strsplit(x = folder, split =  "-")[[1]]
+  simIter <- idString[1]
+  theta <- as.numeric(idString[2])
+  smoothingFactor <- as.numeric(idString[3])
+  
+  id <- paste0("test", "-", (theta), "-", smoothingFactor, "-d")
+  realizations <- fread(paste0(basePath, "/", folder, "/", "traj"), sep = ",", header=T)
+realizations <- realizations %>% mutate(x.real = as.numeric(x.real),
+y.real = as.numeric(y.real),
+x.proj = as.numeric(x.proj),
+y.proj = as.numeric(y.proj))
+  rLand <- terra::rast(paste0(basePath, "/", folder, "/ls.tif"))
+  land_mat <- matrix(values(rLand), nrow = nrow(rLand), ncol = ncol(rLand), byrow = TRUE)
+  ncol_land <- ncol(rLand)
+
+  realIDs <- unique(realizations$trajID)
+  upper <- realIDs[which(realIDs %% 100 == 0)]
+  lower <- c(1, head(upper, -1) + 1)
+  limits <- data.frame(lower = lower, upper = upper)
+ for(i in seq_len(nrow(limits))){
+    library(dplyr)
+    library(tidyr) 
+    library(circular)
+    library(MASS)
+    library(survival)
+    library(terra)
+
+    partIDs <- seq(limits$lower[i], limits$upper[i])
+    partition <- realizations %>% filter(trajID %in% partIDs)
+    partition$rowID <- seq_len(nrow(partition))
+
+    for (delta in deltas) {
+      startIdxs <- partition %>% group_by(trajID) %>% slice(1) %>% pull(rowID) # get starting indicies
+      starts <- partition[startIdxs,] # get starting values
+      ends <- partition[startIdxs + delta,] # get ending values
+      trajectory <- rbind(starts, ends) %>% arrange(rowID)
+
+      trk.real <- data.table(x_ = trajectory$x.real, y_ = trajectory$y.real, t_ = trajectory$rowID)
+      trk.real$burst_ <- rep(seq(1, nrow(trk.real)/2), each = 2)
+      trk.real <- trk.real %>% group_by(burst_) %>% mutate(row = row_number()) %>% ungroup()
+      trk.real <- trk.real %>% pivot_wider(names_from = row, values_from = c(x_, y_, t_), names_sep = "") %>% as.data.table()
+      trk.real <- trk.real %>% mutate(sl_ = sqrt((x_2 - x_1)^2 + (y_2 - y_1)^2), ta_ = getTA(lag(x_1), lag(y_1), lag(x_2), lag(y_2), x_1, y_1, x_2, y_2))
+
+      trk.proj <- data.table(x_ = trajectory$x.proj, y_ = trajectory$y.proj, t_ = trajectory$rowID)
+      trk.proj$burst_ <- rep(seq(1, nrow(trk.proj)/2), each = 2)
+      trk.proj <- trk.proj %>% group_by(burst_) %>% mutate(row = row_number()) %>% ungroup()
+      trk.proj <- trk.proj %>% pivot_wider(names_from = row, values_from = c(x_, y_, t_), names_sep = "") %>% as.data.table()
+
+      trk.real$sl_ <- trk.real$sl_ + 0.0001
+      trk.proj$sl_ <- trk.real$sl_
+
+      slTent <- MASS::fitdistr(trk.real$sl_, "gamma")
+      randSteps <- rgamma(1e4, slTent$estimate['shape'], rate = slTent$estimate['rate'])
+      vonMises <- circular::mle.vonmises(circular::circular(trk.real$ta_))
+      mu <- vonMises$mu[[1]]
+      kappa <- vonMises$kappa
+      randTas <- circular::rvonmises(1e4, mu, kappa)
+      control_steps <- generateRandomSteps(trk.proj, randSteps, randTas, n_control)
+      
+      # clean up
+      rm(randTas,randSteps)
+      gc()
+      
+      control_steps$x_2 <- as.numeric(control_steps$x_2)
+      control_steps$y_2 <- as.numeric(control_steps$y_2)
+
+      case_steps <- trk.proj %>% dplyr::select(burst_, x_1, y_1, x_2, y_2, sl_) %>% mutate(case_ = TRUE)
+      stps <- bind_rows(case_steps, control_steps) %>% arrange(burst_)
+      
+      stps$x_2 <- stps$x_2 %% ncol_land
+      stps$y_2 <- stps$y_2 %% ncol_land
+      
+      stps$x_2 <- if_else(stps$x_2 == 0, ncol, stps$x_2)
+      stps$y_2 <- if_else(stps$y_2 == 0, ncol, stps$y_2)
+      
+      stps$x_2 <- if_else(stps$x_2 < 1, 1, stps$x_2)
+      stps$y_2 <- if_else(stps$y_2 < 1, 1, stps$y_2)
+      
+      stps$land <- land_mat[cbind(stps$y_2, stps$x_2)]
+      stps <- stps %>% mutate(log_sl_ = log(sl_))
+
+      modISSA <- modISSA <- tryCatch({
+  clogit(case_ ~ log_sl_ + sl_ + land + strata(burst_), data = stps)
+}, error = function(e) NULL)
+
+if (!is.null(modISSA) && "land" %in% names(coef(modISSA))) {
+  sl_fit <- fitdistr(trk.real$sl_, "gamma")
+  sl_samples <- rgamma(n = 1e4, shape = sl_fit$estimate["shape"], rate = sl_fit$estimate["rate"])
+  log_sl_samples <- log(sl_samples + 1e-4)
+  weights <- exp(coef(modISSA)["log_sl_"] * log_sl_samples + coef(modISSA)["sl_"] * sl_samples)
+  empirical_sl_ <- sum(weights * sl_samples) / sum(weights)
+
+  row_result <- data.frame(
+    id = f,
+    theta = theta,
+    betaISSF = coef(modISSA)["land"],
+    sl_obs_ = empirical_sl_,
+    smoothingFctr = smoothingFactor,
+    delta = delta
+  )
+
+  delta_results[[length(delta_results) + 1]] <- row_result
+
+  # clean up
+  rm(sl_samples, log_sl_samples, weights, empirical_sl_)
+  gc()
+} else {
+  message(sprintf("Skipping delta=%s for folder %s: model failed or 'land' coef missing", delta, folder))
+}
+
+      buffCount <- buffCount + 1
+      if(buffCount >= buffSize){
+      fwrite(rbindlist(delta_results), file = paste0(basePath,"/", id,"/", "metaDat"), sep = ",", append = TRUE,
+      col.names = !file.exists(paste0(basePath,"/", id,"/", "metaDat")))
+      rm(delta_results)
+      gc()
+      delta_results <- list()
+      buffCount <- 0
+      }
+    }
+    rm(partition)
+    gc()
+ }
+ rm(realizations)
+  if(length(delta_results) > 0){
+      fwrite(rbindlist(delta_results), file = paste0(basePath,"/", id,"/", "metaDat"), sep = ",", append = TRUE,
+      col.names = !file.exists(paste0(basePath,"/", id,"/", "metaDat")))
+      rm(delta_results)
+      gc()
+      delta_results <- list()
+      buffCount <- 0
+    }
+}
+
+#metaDat <- bind_rows(delta_results)
+```
+
+```{r analysis mult steps}
+library(dplyr)
+library(tidyr)
+library(terra)
+library(survival)
+library(circular)
+library(MASS)
+library(future)
+library(spdep)
+
+deltas <- seq(100, 1000, by = 100)
+nsteps <- 10
+basePath <- "./data/output/domain-100-by-100"
+folders <- list.files(path = basePath, recursive = FALSE)
+folders <- folders[c(19,20)]
+results_list <- vector("list", length = length(folders))
+delta_results <- list()
+
+foreach(f = seq_along(folders)) %dopar% {
+  folder <- folders[f]
+  idString <- strsplit(x = folder, split =  "-")[[1]]
+  simIter <- idString[1]
+  theta <- as.numeric(idString[2]) / 10
+  smoothingFactor <- as.numeric(idString[3])
+  movePen <- as.numeric(idString[4]) / 100
+  realizations <- read.table(paste0(basePath, "/", folder, "/", "traj"))
+
+  rLand <- terra::rast(paste0(basePath, "/", folder, "/ls.tif"))
+  land_mat <- matrix(values(rLand), nrow = nrow(rLand), ncol = ncol(rLand), byrow = TRUE)
+  ncol_land <- ncol(rLand)
+
+  realIDs <- unique(realizations$trajID)
+  upper <- realIDs[which(realIDs %% 100 == 0)]
+  lower <- c(1, head(upper, -1) + 1)
+  limits <- data.frame(lower = lower, upper = upper)
+
+ for(i in seq_len(nrow(limits))){
+    library(dplyr)
+    library(tidyr) 
+    library(circular)
+    library(MASS)
+    library(survival)
+    library(terra)
+
+    partIDs <- seq(limits$lower[i], limits$upper[i])
+    partition <- realizations %>% filter(trajID %in% partIDs)
+    partition$rowID <- seq_len(nrow(partition))
+
+    for (delta in deltas) {
+      trajectory <- partition %>% group_by(trajID) %>% slice(seq(1, delta*nsteps, by = delta)) %>% arrange(rowID) # get starting indicies
+      trk.real <- data.frame(x_ = trajectory$x.real, y_ = trajectory$y.real, t_ = trajectory$rowID)
+      trk.real$burst_ <- rep(seq(1, nrow(trk.real)/nsteps), each = nsteps)
+      trk.real$stepid_ <- rep(seq(1, nsteps/2), each = 2)
+      trk.real <- trk.real %>% group_by(burst_, stepid_) %>% mutate(row = row_number()) %>% ungroup()
+      trk.real <- trk.real %>% pivot_wider(names_from = row, values_from = c(x_, y_, t_), names_sep = "") %>% as.data.frame()
+      trk.real <- trk.real %>% mutate(sl_ = sqrt((x_2 - x_1)^2 + (y_2 - y_1)^2), ta_ = getTA(lag(x_1), lag(y_1), lag(x_2), lag(y_2), x_1, y_1, x_2, y_2))
+
+      trk.proj <- data.frame(x_ = trajectory$x.proj, y_ = trajectory$y.proj, t_ = trajectory$rowID)
+      trk.proj$burst_ <- rep(seq(1, nrow(trk.proj)/nsteps), each = nsteps)
+      trk.proj$stepid_ <- rep(seq(1, nsteps/2), each = 2)
+      trk.proj <- trk.proj %>% group_by(burst_, stepid_) %>% mutate(row = row_number()) %>% ungroup()
+      trk.proj <- trk.proj %>% pivot_wider(names_from = row, values_from = c(x_, y_, t_), names_sep = "") %>% as.data.frame()
+
+      trk.real$sl_ <- trk.real$sl_ + 0.0001
+      trk.proj$sl_ <- trk.real$sl_
+
+      slTent <- MASS::fitdistr(trk.real$sl_, "gamma")
+      randSteps <- rgamma(1e4, slTent$estimate['shape'], rate = slTent$estimate['rate'])
+      vonMises <- circular::mle.vonmises(circular::circular(trk.real$ta_))
+      mu <- vonMises$mu[[1]]
+      kappa <- vonMises$kappa
+      randTas <- circular::rvonmises(1e4, mu, kappa)
+      control_steps <- generateRandomSteps(trk.proj, randSteps, randTas, n_control)
+      
+      # clean up
+      rm(randTas,randSteps)
+      gc()
+      
+      control_steps$x_2 <- as.numeric(control_steps$x_2)
+      control_steps$y_2 <- as.numeric(control_steps$y_2)
+
+      case_steps <- trk.proj %>% dplyr::select(burst_, x_1, y_1, x_2, y_2, sl_) %>% mutate(case_ = TRUE)
+      stps <- bind_rows(case_steps, control_steps) %>% arrange(burst_)
+      
+      stps$x_2 <- stps$x_2 %% ncol_land
+      stps$y_2 <- stps$y_2 %% ncol_land
+      
+      stps$x_2 <- if_else(stps$x_2 == 0, ncol, stps$x_2)
+      stps$y_2 <- if_else(stps$y_2 == 0, ncol, stps$y_2)
+      
+      stps$x_2 <- if_else(stps$x_2 < 1, 1, stps$x_2)
+      stps$y_2 <- if_else(stps$y_2 < 1, 1, stps$y_2)
+      
+      stps$land <- land_mat[cbind(stps$y_2, stps$x_2)]
+      stps <- stps %>% mutate(log_sl_ = log(sl_))
+
+      modISSA <- clogit(case_ ~ log_sl_ + sl_ + land + strata(burst_), data = stps)
+
+      sl_fit <- fitdistr(trk.real$sl_, "gamma")
+      sl_samples <- rgamma(n = 1e4, shape = sl_fit$estimate["shape"], rate = sl_fit$estimate["rate"])
+      log_sl_samples <- log(sl_samples + 1e-4)
+      weights <- exp(coef(modISSA)["log_sl_"] * log_sl_samples + coef(modISSA)["sl_"] * sl_samples)
+      empirical_sl_ <- sum(weights * sl_samples) / sum(weights)
+      
+      # clean up
+      rm(sl_samples, log_sl_samples)
+      gc()
+      
+      row_result <- data.frame(
+        id = f,
+        theta = theta,
+        betaISSF = coef(modISSA)["land"],
+        sl_obs_ = empirical_sl_,
+        smoothingFctr = smoothingFactor,
+        delta = delta
+      )
+
+      delta_results[[length(delta_results) + 1]] <- row_result
+    }
+ }
+  rm(realizations)
+  gc()
+}
+
+metaDat <- bind_rows(delta_results)
+```
+
+```{r}
+deltas <- seq(100, 1000, by = 100)
+nsteps <- 10
+basePath <- "./data/output/domain-100-by-100"
+folders <- list.files(path = basePath, recursive = FALSE)
+metList <- list()
+for(i in seq_along(folders)){
+  folder <- folders[i]
+  met <- fread(paste0(basePath, "/", folder, "/", "metaDat"), sep = ",", header=T)
+  metList[[length(metList) + 1]] <- met
+}
+metaDat <- rbindlist(metList)
+m <- metaDat %>% group_by(theta, smoothingFctr, delta) %>%
+summarise(smoothingFctr = unique(smoothingFctr),
+theta = unique(theta),
+minBetaISSF = quantile(as.numeric(betaISSF), 0.025),
+meanBetaISSF = quantile(as.numeric(betaISSF), 0.5),
+maxBetaISSF = quantile(as.numeric(betaISSF), 0.975),
+minSlObs = quantile(as.numeric(sl_obs_), 0.025),
+meanSlObs = quantile(as.numeric(sl_obs_), 0.5),
+maxSlObs = quantile(as.numeric(sl_obs_), 0.975),
+.groups = 'drop')
+```
+
