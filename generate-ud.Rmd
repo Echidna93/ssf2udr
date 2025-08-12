@@ -11,9 +11,8 @@ library(foreach)
 ```{r}
 checkTrackUD <- function(realizations, nrow, ncol){
   ud <- matrix(0, nrow = nrow, ncol = ncol)
-  for(i in 1:nrow(realizations)){
-    ud[realizations[i,]$x.proj, realizations[i,]$y.proj] <- ud[realizations[i,]$x.proj, realizations[i,]$y.proj] + 1
-  }
+  cell_counts <- realizations[,.N,  by = .(y.proj, x.proj)]
+   ud[cbind(cell_counts$y.proj, cell_counts$x.proj)] <- cell_counts$N
   return(ud)
 }
 
@@ -32,24 +31,13 @@ basePath <- "./data/output/domain-100-by-100"
 # get folder names in base path
 #folders <- list.files(path = basePath, recursive = FALSE)
 
-folders <- c("2-20-3-125", "4-20-0-25", "4-20-1-25", "4-20-3-25", "4-20-5-25", "4-20-7-25", "4-20-9-25", "4-20-11-25")
+folders <- c("test-3-6")
 nfolders <- length(folders)
 # step thru each folder name
-foreach(f = 1:nfolders) %dopar% {
+for (f in seq_len(nfolders)){
   library(terra)
-  library(raster) # for ncell function
-  library(amt)
-  library(dplyr)
-  library(tidyr)
-  library(ggplot2)# for running foreach in parallel
-  library(MASS) # for mvrnorm
-  library(survival) # for CLOGIT
-  library(remotes) # for installing non-CRAN libs with install_github
-  library(cowplot) # for multipanel plots
-  library(ggpubr) # for multipanel plots
-  library(raster) # for writeRaster function
-  library(ggpmisc)
-
+  library(raster)
+  library(data.table)# for ncell function
   # extract parameters from folder name
   # n.b., id = simIter - theta*10 - smoothingFactor - movePen*100
   folder <- folders[f]
@@ -57,18 +45,20 @@ foreach(f = 1:nfolders) %dopar% {
   simIter <- idString[1] # simIter
   theta <- as.numeric(idString[2]) / 10 # habitat preference
   smoothingFactor <- as.numeric(idString[3]) # rho
-  movePen <- as.numeric(idString[4]) / 100 # mu 
+ # movePen <- as.numeric(idString[4]) / 100 # mu 
   # read in data
-  realizations <- read.table(paste0(basePath,"/", folder, "/", "traj"),header=TRUE, sep=",", row.names=NULL) #ud 
+  realizations <- data.table::fread(paste0(basePath,"/", folder, "/", "traj"),header=TRUE, sep=",") #ud 
   ud <- checkTrackUD(realizations = realizations, nrow, ncol)
-  writeRaster(rast(ud), filename = paste0(basePath,"/", folder, "/", "ud.tif"))
+  terra::writeRaster(rast(ud), filename = paste0(basePath,"/", folder, "/", "ud2.tif"), overwrite=TRUE)
   }
 ```
 ```{r generate UD graphs}
 # get base path
 basePath <- "./data/output/domain-100-by-100"
 # get folder names in base path
+#folders <- c( "test-3-6")
 folders <- list.files(path = basePath, recursive = FALSE)
+folders <- folders[grepl("d", folders)]
 nfolders <- length(folders)
 for(f in seq_along(folders)){
   folder <- folders[f]
@@ -76,12 +66,12 @@ for(f in seq_along(folders)){
   simIter <- idString[1] # simIter
   theta <- as.numeric(idString[2]) # habitat preference
   smoothingFactor <- as.numeric(idString[3]) # rho
-  movePen <- as.numeric(idString[4]) / 100 # mu 
+  #movePen <- as.numeric(idString[4]) / 100 # mu 
   ud <- terra::rast(paste0(basePath, "/", folder, "/", "ud.tif"))
   land <- terra::rast(paste0(basePath, "/", folder, "/", "ls.tif"))
   out <- data.frame(land = terra::values(land), ud = log(terra::values(ud)/1e8))
   names(out) <- c("land", "ud")
-  plot <- ggplot(out, aes(x = land, y = ud)) + geom_point() +   geom_smooth(method = "lm", se = FALSE, color = "blue") +  # line of best fit
+  p <- ggplot(out, aes(x = land, y = ud)) + geom_point() +   geom_smooth(method = "lm", se = FALSE, color = "blue") +  # line of best fit
     stat_poly_eq(
         formula = y ~ x,
         aes(label = paste(..eq.label.., sep = "~~~")),
@@ -90,7 +80,7 @@ for(f in seq_along(folders)){
     ) +
     theme_minimal() +
     ggtitle( label = paste0('\u03C1', " = ", smoothingFactor, ";", " \u0398", " = ", theta))
-  ggsave(paste0(basePath, "/", folders[f], "/", "ud-plot.png"), plot)
+  ggsave(paste0(basePath, "/", folder, "/", "ud-plot.png"), p)
 }
 
 ```

@@ -19,8 +19,8 @@ n_rows<- 100
 n_cols <- 100
 isDiscrete <- FALSE
 source('helpers.R')
-nburnin <- 2e4
-nsteps <- 3e4
+nburnin <- 5000
+nsteps <- 10000
 sf <- 6 # radius of circular smoothing window
 trajID <- 1 # tracks the trajectory number 
 # set up file directory
@@ -44,11 +44,12 @@ registerDoParallel(cl)
 ```
 ```{r generate UD stats, echo = FALSE, eval = FALSE}
 # generate unique theta-rho combinations
-thetas <- c(1,2,3,4)
-rhos <- c(0,2,4,6,8)
+thetas <- c(-0.5, -0.25, -0.1, -0.05, 0,
+       0.05, 0.1, 0.15, 0.2, 1.0, 1.5)
+rhos <- c(0,2,4,6,40)
 controls <- data.frame(expand.grid(thetas, rhos))
 names(controls) <- c("theta", "rho")
-controls[nrow(controls) + 1,] <- c(0, 0)
+#controls[nrow(controls) + 1,] <- c(0, 0)
 #controls <- controls %>% arrange(theta)tra
 library(data.table)
 #controls <- data.frame(theta = c(4,4), rho = c(6,4))
@@ -59,9 +60,9 @@ foreach(i = seq_len(nrow(controls)),
   dx = c(0, 0, 0, -1, 1),
   dy = c(-1, 1, 0, 0, 0))
   buffCount <- 0
-  n_rows<- 100
-  n_cols <- 100
-  buffSize <- 1
+  n_rows<- 10
+  n_cols <- 10
+  buffSize <- 10
   trajBuff <- list()
   trajID <- 1
   ud <- matrix(0, nrow = n_rows, ncol = n_cols)
@@ -72,7 +73,7 @@ foreach(i = seq_len(nrow(controls)),
   #land <- rast(paste0(path, "/", "test-4-0", "/", "ls.tif"))
   #land <- matrix(values(land), nrow = n_rows, ncol = n_cols)
   land <- iterativeSmooth(land, sf, rho, n_rows, n_cols)
-    id <- paste0("test", "-", theta, "-", rho, "-", "30k")
+    id <- paste0("test", "-", theta, "-", rho)
   if(isDiscrete){
     land <- ifelse(land >= 0.5, 1, 0)
     id <- paste0(id, "-d")
@@ -109,6 +110,130 @@ foreach(i = seq_len(nrow(controls)),
       decision <- sample(1:length(neighProjX), 1, prob = wghts, replace = TRUE)
       
       rowResult <- data.table(trajID = trajID,
+                              x.proj = neighProjX[decision],
+                              y.proj = neighProjY[decision],
+                              x.real = neighRealX[decision],
+                              y.real = neighRealY[decision])
+  
+      if (iter > nburnin) {
+      trajList[[length(trajList) + 1]] <- rowResult
+      #print(trajList)
+      ud[cbind(rowResult$y.proj, rowResult$x.proj)] <- ud[cbind(rowResult$y.proj, rowResult$x.proj)] + 1
+      }
+      # update x and y coords
+      xProj <- neighProjX[decision]
+      yProj <- neighProjY[decision]
+      xReal <- neighRealX[decision]
+      yReal <- neighRealY[decision]
+      }
+    trajBuff[[length(trajBuff) + 1]] <- rbindlist(trajList)
+    buffCount <- buffCount + 1
+    print(buffCount)
+    trajID <- trajID + 1
+    # flush
+    if (buffCount >= buffSize) {
+      fwrite(rbindlist(trajBuff), file = paste0(path,"/", id,"/", "traj"), sep = ",", append = TRUE,
+      col.names = !file.exists(paste0(path,"/", id,"/", "traj")))
+      trajBuff <- list()
+      buffCount <- 0
+    }
+    
+    }
+  }
+   writeRaster(rast(ud), filename = paste0(path,"/", id, "/", "ud.tif"), overwrite = TRUE)
+   # final flush
+   if (length(trajBuff) > 0) {
+      fwrite(rbindlist(trajBuff), file = paste0(path,"/", id,"/", "traj"), sep = ",", append = TRUE,
+      col.names = !file.exists(paste0(path,"/", id,"/", "traj")))
+    }
+}
+```
+
+```{r sim direction persistence, echo = FALSE, eval = FALSE}
+# generate unique theta-rho combinations
+thetas <- c(0.5, 1, 1.5, 2)
+rhos <- c(0,2,6,40)
+kappa <- 2.5
+distBeta <- -1
+controls <- data.frame(expand.grid(thetas, rhos))
+names(controls) <- c("theta", "rho")
+#controls[nrow(controls) + 1,] <- c(0, 0)
+#controls <- controls %>% arrange(theta)tra
+library(data.table)
+#controls <- data.frame(theta = c(4,4), rho = c(6,4))
+names(controls) <- c("theta", "rho")
+foreach(i = seq_len(nrow(controls)),
+        .packages = c("terra", "data.table")) %dopar% {
+  neighOffsets <- data.frame(
+  dx = c(0, 0, -1, 1, 1, -1, 1, -1),
+  dy = c(-1, 1, 0, 0, -1, -1, 1, 1))
+  step_cost <- sqrt(neighOffsets$dx^2 + neighOffsets$dy^2)
+  buffCount <- 0
+  n_rows<- 100
+  n_cols <- 100
+  buffSize <- 10
+  trajBuff <- list()
+  trajID <- 1
+  ud <- matrix(0, nrow = n_rows, ncol = n_cols)
+  resultList <- list()
+  theta <- as.numeric(controls[i,"theta"])
+  rho <- as.numeric(controls[i,"rho"])
+  land <- makeLandscapeMatrix(nrow = n_rows, ncol = n_cols, seed = i)
+  #land <- rast(paste0(path, "/", "test-4-0", "/", "ls.tif"))
+  #land <- matrix(values(land), nrow = n_rows, ncol = n_cols)
+  land <- iterativeSmooth(land, sf, rho, n_rows, n_cols)
+    id <- paste0("test", "-", theta, "-", rho, "-", kappa)
+  if(isDiscrete){
+    land <- ifelse(land >= 0.5, 1, 0)
+    id <- paste0(id, "-d")
+  }
+  #id <- paste0("test", "-", theta, "-", rho)
+  burninCounter <- 1
+  if(!dir.exists(paste0(path, "/",domName))){
+    dir.create(paste0(path, "/", id)) # create dir
+  }
+  #write landscape to file
+  writeRaster(rast(land), filename = paste0(path,"/", id, "/", "ls.tif"), overwrite = TRUE)
+  for(j in seq_len(n_rows)){
+    for(k in seq_len(n_cols)){
+        prev_dx <- 0
+        prev_dy <- 0
+        trajList <- list()
+        xProj <- k
+        yProj <- j
+        xReal <- k
+        yReal <- j
+        # # get init location
+        rowResult <- data.table::data.table(trajID = trajID,
+                              x.proj = k,
+                              y.proj = j,
+                              x.real = k,
+                              y.real = j)
+        for(iter in seq_len(nsteps)){
+      
+  # Compute dot product between previous direction and each candidate
+        dot_products <- prev_dx * neighOffsets$dx + prev_dy * neighOffsets$dy
+
+  # Get vector norms
+  prev_norm <- sqrt(prev_dx^2 + prev_dy^2)
+  cand_norms <- sqrt(neighOffsets$dx^2 + neighOffsets$dy^2)
+
+  cos_angles <- dot_products / (prev_norm * cand_norms)
+  cos_angles[is.nan(cos_angles)] <- 0  # handle 0/0 for first step
+
+  neighProjX <- clampToSize(xProj + neighOffsets$dx, ncol = n_cols)
+  neighProjY <- clampToSize(yProj + neighOffsets$dy, ncol = n_cols)
+  neighRealX <- xReal + neighOffsets$dx
+  neighRealY <- yReal + neighOffsets$dy
+  landVals <- land[cbind(neighProjY, neighProjX)]
+  # Now compute weights
+  combined_weights <- exp((theta * landVals) + (kappa * cos_angles) + distBeta*step_cost)
+
+      #if (any(is.na(wghts)) || sum(wghts) == 0) next  # <-- ADD THIS LINE
+  decision <- sample(1:length(neighProjX), 1, prob = combined_weights, replace = TRUE)
+  prev_dx <- neighOffsets[decision,]$dx
+  prev_dy <- neighOffsets[decision,]$dy
+  rowResult <- data.table(trajID = trajID,
                               x.proj = neighProjX[decision],
                               y.proj = neighProjY[decision],
                               x.real = neighRealX[decision],

@@ -9,7 +9,8 @@ library(terra)
 ```
 ```{r load folders}
 basePath <- "./data/output/domain-100-by-100"
-folders <- list.files(path = basePath, recursive = FALSE)
+#folders <- list.files(path = basePath, recursive = FALSE)
+folders <- c("test-3-6", "test-2-4")
 ```
 ```{r read files}
 for (f in seq_along(folders)){

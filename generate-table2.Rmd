@@ -109,8 +109,10 @@ n_cores <- parallel::detectCores()
 # Optionally leave 1 core free for the OS
 n_workers <- max(1, n_cores - 20)
 
+
 # Set up the cluster
-cl <- makeCluster(n_workers)
+cl <- makeCluster(4)
+
 
 registerDoParallel(cl)
 ```
@@ -140,7 +142,8 @@ library(data.table)
 basePath <- "./data/output/domain-100-by-100"
 folders <- list.files(path = basePath, recursive = FALSE)
 # discrete case only
-folders <- folders[which(grepl("-d",folders))]
+folders <- folders[which(grepl("test",folders))]
+#folders <- c("test-0.1-40-2.5", "test-1.5-2-2.5")
 results_list <- vector("list", length = length(folders))
 delta_results <- list()
 buffSize <- 10
@@ -160,7 +163,7 @@ foreach(f = seq_along(folders)) %dopar% {
   theta <- as.numeric(idString[2])
   smoothingFactor <- as.numeric(idString[3])
   
-  id <- paste0("test", "-", (theta), "-", smoothingFactor, "-d")
+  id <- paste0("test", "-", (theta), "-", smoothingFactor, "-2.5")
   realizations <- fread(paste0(basePath, "/", folder, "/", "traj"), sep = ",", header=T)
 realizations <- realizations %>% mutate(x.real = as.numeric(x.real),
 y.real = as.numeric(y.real),
@@ -204,7 +207,7 @@ y.proj = as.numeric(y.proj))
       trk.proj <- trk.proj %>% pivot_wider(names_from = row, values_from = c(x_, y_, t_), names_sep = "") %>% as.data.table()
 
       trk.real$sl_ <- trk.real$sl_ + 0.0001
-      trk.proj$sl_ <- trk.real$sl_
+      #trk.proj$sl_ <- trk.real$sl_
 
       slTent <- MASS::fitdistr(trk.real$sl_, "gamma")
       randSteps <- rgamma(1e4, slTent$estimate['shape'], rate = slTent$estimate['rate'])
@@ -227,8 +230,8 @@ y.proj = as.numeric(y.proj))
       stps$x_2 <- stps$x_2 %% ncol_land
       stps$y_2 <- stps$y_2 %% ncol_land
       
-      stps$x_2 <- if_else(stps$x_2 == 0, ncol, stps$x_2)
-      stps$y_2 <- if_else(stps$y_2 == 0, ncol, stps$y_2)
+      stps$x_2 <- if_else(stps$x_2 == 0, ncol_land, stps$x_2)
+      stps$y_2 <- if_else(stps$y_2 == 0, ncol_land, stps$y_2)
       
       stps$x_2 <- if_else(stps$x_2 < 1, 1, stps$x_2)
       stps$y_2 <- if_else(stps$y_2 < 1, 1, stps$y_2)
@@ -251,7 +254,7 @@ if (!is.null(modISSA) && "land" %in% names(coef(modISSA))) {
     id = f,
     theta = theta,
     betaISSF = coef(modISSA)["land"],
-    sl_obs_ = empirical_sl_,
+    sl_obs_ = empirical_sl_, # change to selection-free step length
     smoothingFctr = smoothingFactor,
     delta = delta
   )
@@ -289,7 +292,7 @@ if (!is.null(modISSA) && "land" %in% names(coef(modISSA))) {
     }
 }
 
-#metaDat <- bind_rows(delta_results)
+metaDat <- bind_rows(delta_results)
 ```
 
 ```{r analysis mult steps}
@@ -388,7 +391,7 @@ foreach(f = seq_along(folders)) %dopar% {
       stps$land <- land_mat[cbind(stps$y_2, stps$x_2)]
       stps <- stps %>% mutate(log_sl_ = log(sl_))
 
-      modISSA <- clogit(case_ ~ log_sl_ + sl_ + land + strata(burst_), data = stps)
+      modISSA <- clogit(case_ ~ log_sl_ + sl_ + land + cos(ta_) + strata(burst_), data = stps)
 
       sl_fit <- fitdistr(trk.real$sl_, "gamma")
       sl_samples <- rgamma(n = 1e4, shape = sl_fit$estimate["shape"], rate = sl_fit$estimate["rate"])
@@ -410,6 +413,16 @@ foreach(f = seq_along(folders)) %dopar% {
       )
 
       delta_results[[length(delta_results) + 1]] <- row_result
+      
+      buffCount <- buffCount + 1
+      if(buffCount >= buffSize){
+      fwrite(rbindlist(delta_results), file = paste0(basePath,"/", id,"/", "metaDat-no-part"), sep = ",", append = TRUE,
+      col.names = !file.exists(paste0(basePath,"/", id,"/", "metaDat")))
+      rm(delta_results)
+      gc()
+      delta_results <- list()
+      buffCount <- 0
+      }
     }
  }
   rm(realizations)
@@ -419,11 +432,151 @@ foreach(f = seq_along(folders)) %dopar% {
 metaDat <- bind_rows(delta_results)
 ```
 
+```{r analysis no partition}
+library(dplyr)
+library(tidyr)
+library(terra)
+library(survival)
+library(circular)
+library(MASS)
+library(future)
+library(spdep)
+library(data.table)
+
+deltas <- seq(100, 2000, by = 200)
+nsteps <- 50
+basePath <- "./data/output/domain-100-by-100"
+folders <- list.files(path = basePath, recursive = FALSE)
+folders <- folders[which(grepl("test",folders))]
+folders <- c("test-4-8", "test-3-4", "test-1-2")
+results_list <- vector("list", length = length(folders))
+delta_results <- list()
+buffSize <- 10
+buffCount <- 0
+foreach(f = seq_along(folders)) %dopar% {
+library(dplyr)
+library(tidyr)
+library(terra)
+library(survival)
+library(circular)
+library(MASS)
+library(future)
+library(spdep)
+library(data.table)
+
+  folder <- folders[f]
+  idString <- strsplit(x = folder, split =  "-")[[1]]
+  simIter <- idString[1]
+  theta <- as.numeric(idString[2])
+  smoothingFactor <- as.numeric(idString[3])
+  id <- paste0("test", "-", (theta), "-", smoothingFactor)
+  realizations <- fread(paste0(basePath, "/", folder, "/", "traj"))
+  
+  realIDs <- unique(realizations$trajID)
+  rLand <- terra::rast(paste0(basePath, "/", folder, "/ls.tif"))
+  land_mat <- matrix(values(rLand), nrow = nrow(rLand), ncol = ncol(rLand), byrow = TRUE)
+  ncol_land <- ncol(rLand)
+  for(i in seq_along(realIDs)){
+  trajectory <- realizations %>% filter(trajID == realIDs[i]) 
+  trajectory <- trajectory %>% mutate(rowID =  seq_len(nrow(trajectory))) %>% arrange(rowID)
+  for(delta in deltas){
+  t <- trajectory %>% 
+  slice(seq(1, delta*nsteps, by = delta))
+  # rarify by number of steps and distance between steps
+  
+  trk.real <- data.frame(x_ = t$x.real, y_ = t$y.real, t_ = t$rowID)
+      trk.real$burst_ <- rep(seq(1, nrow(trk.real)/nsteps), each = nsteps)
+      trk.real$stepid_ <- rep(seq(1, nsteps/2), each = 2)
+      trk.real <- trk.real %>% group_by(burst_, stepid_) %>% mutate(row = row_number()) %>% ungroup()
+      trk.real <- trk.real %>% pivot_wider(names_from = row, values_from = c(x_, y_, t_), names_sep = "") %>% as.data.frame()
+      trk.real <- trk.real %>% mutate(sl_ = sqrt((x_2 - x_1)^2 + (y_2 - y_1)^2), ta_ = getTA(lag(x_1), lag(y_1), lag(x_2), lag(y_2), x_1, y_1, x_2, y_2))
+
+      trk.proj <- data.frame(x_ = t$x.proj, y_ = t$y.proj, t_ = t$rowID)
+      trk.proj$burst_ <- rep(seq(1, nrow(trk.proj)/nsteps), each = nsteps)
+      trk.proj$stepid_ <- rep(seq(1, nsteps/2), each = 2)
+      trk.proj <- trk.proj %>% group_by(burst_, stepid_) %>% mutate(row = row_number()) %>% ungroup()
+      trk.proj <- trk.proj %>% pivot_wider(names_from = row, values_from = c(x_, y_, t_), names_sep = "") %>% as.data.frame()
+
+      trk.real$sl_ <- trk.real$sl_ + 0.0001
+      trk.proj$sl_ <- trk.real$sl_
+
+      slTent <- MASS::fitdistr(trk.real$sl_, "gamma")
+      randSteps <- rgamma(1e4, slTent$estimate['shape'], rate = slTent$estimate['rate'])
+      vonMises <- circular::mle.vonmises(circular::circular(trk.real$ta_))
+      mu <- vonMises$mu[[1]]
+      kappa <- vonMises$kappa
+      randTas <- circular::rvonmises(1e4, mu, kappa)
+      control_steps <- generateRandomSteps(trk.proj, randSteps, randTas, n_control)
+      
+      # clean up
+      rm(randTas,randSteps)
+      gc()
+      
+      control_steps$x_2 <- as.numeric(control_steps$x_2)
+      control_steps$y_2 <- as.numeric(control_steps$y_2)
+
+      case_steps <- trk.proj %>% dplyr::select(burst_, x_1, y_1, x_2, y_2, sl_) %>% mutate(case_ = TRUE)
+      stps <- bind_rows(case_steps, control_steps) %>% arrange(burst_)
+      
+      stps$x_2 <- stps$x_2 %% ncol_land
+      stps$y_2 <- stps$y_2 %% ncol_land
+      
+      stps$x_2 <- if_else(stps$x_2 == 0, ncol_land, stps$x_2)
+      stps$y_2 <- if_else(stps$y_2 == 0, ncol_land, stps$y_2)
+      
+      stps$x_2 <- if_else(stps$x_2 < 1, 1, stps$x_2)
+      stps$y_2 <- if_else(stps$y_2 < 1, 1, stps$y_2)
+      
+      stps$land <- land_mat[cbind(stps$y_2,stps$x_2)]
+      stps <- stps %>% mutate(log_sl_ = log(sl_))
+
+      modISSA <- clogit(case_ ~ log_sl_ + sl_ + cos(ta_) + land + strata(burst_), data = stps)
+
+      sl_fit <- fitdistr(trk.real$sl_, "gamma")
+      sl_samples <- rgamma(n = 1e4, shape = sl_fit$estimate["shape"], rate = sl_fit$estimate["rate"])
+      log_sl_samples <- log(sl_samples + 1e-4)
+      weights <- exp(coef(modISSA)["log_sl_"] * log_sl_samples + coef(modISSA)["sl_"] * sl_samples)
+      empirical_sl_ <- sum(weights * sl_samples) / sum(weights)
+      
+      # clean up
+      rm(sl_samples, log_sl_samples)
+      gc()
+      
+      row_result <- data.frame(
+        id = f,
+        theta = theta,
+        betaISSF = coef(modISSA)["land"],
+        sl_obs_ = empirical_sl_,
+        smoothingFctr = smoothingFactor,
+        delta = delta
+      )
+
+      delta_results[[length(delta_results) + 1]] <- row_result
+      buffCount <- buffCount + 1
+      if(buffCount >= buffSize){
+      fwrite(rbindlist(delta_results), file = paste0(basePath,"/", id, "/", "metaDat-no-part"), sep = ",", append = TRUE,
+      col.names = !file.exists(paste0(basePath,"/", id, "/", "metaDat-no-part")))
+      rm(delta_results)
+      gc()
+      delta_results <- list()
+      buffCount <- 0
+      }
+    }
+ }
+  rm(realizations)
+  gc()
+}
+
+metaDat <- bind_rows(delta_results)
+```
+
+
 ```{r}
 deltas <- seq(100, 1000, by = 100)
 nsteps <- 10
 basePath <- "./data/output/domain-100-by-100"
 folders <- list.files(path = basePath, recursive = FALSE)
+folders <- folders[which(grepl("",folders))]
 metList <- list()
 for(i in seq_along(folders)){
   folder <- folders[i]
@@ -441,5 +594,125 @@ minSlObs = quantile(as.numeric(sl_obs_), 0.025),
 meanSlObs = quantile(as.numeric(sl_obs_), 0.5),
 maxSlObs = quantile(as.numeric(sl_obs_), 0.975),
 .groups = 'drop')
+```
+
+```{r get the q graph}
+basePath <- "./data/output/domain-100-by-100"
+folders <- list.files(path = basePath, recursive = FALSE)
+folders <- folders[which(grepl("test",folders))]
+#folders <- c("test-0.3-40-0.3", "test-4-6-0.3", "test-4-40-0.3")
+# folders <- c("test-3-4", "test-4-8", "test-1-4", "test-2-2")
+metList <- list()
+for(i in seq_along(folders)){
+  folder <- folders[i]
+  ud <- terra::rast(paste0(basePath, "/", folder, "/", "ud.tif"))
+  land <- terra::rast(paste0(basePath, "/", folder, "/", "ls.tif"))
+  metaDat <- read.table(paste0(basePath, "/", folder, "/", "metaDat"), sep = ",", header = TRUE)
+  out <- data.frame(land = terra::values(land), ud = terra::values(ud))
+  names(out) <- c("land", "ud")
+  out$ud <- out$ud / sum(out$ud)
+  metaDat$q <- NA
+  #metaDat$mBetaX <- NA
+  for(l in seq_len(nrow(metaDat))){
+    beta <- metaDat[l,"betaISSF"]
+    K1 <- sum(exp(beta*out$land))
+    K2 <- sum(exp(2*beta*out$land))
+    Yx <- exp(2*beta*out$land) - exp(beta*out$land) + K1*out$ud - K2*out$ud
+    Xx <- K1*out$ud - exp(beta*out$land)
+    dat <- data.frame(Yx = Yx, Xx = Xx)
+    qmod <- lm(scale(Yx) ~ scale(Xx), dat)
+    q <- qmod$coefficients[[2]]
+    metaDat[l,"q"] <- q
+  }
+  metList[[length(metList) + 1]] <- metaDat
+}
+ls <- rbindlist(metList)
+m <- ls %>% group_by(theta, smoothingFctr, delta) %>% filter(theta != 0) %>%
+summarise(smoothingFctr = unique(smoothingFctr),
+theta = unique(theta),
+minBetaISSF = quantile(as.numeric(betaISSF), 0.025),
+meanBetaISSF = quantile(as.numeric(betaISSF), 0.5),
+maxBetaISSF = quantile(as.numeric(betaISSF), 0.975),
+minSlObs = quantile(as.numeric(sl_obs_), 0.025),
+meanSlObs = quantile(as.numeric(sl_obs_), 0.5),
+maxSlObs = quantile(as.numeric(sl_obs_), 0.975),
+meanq  = quantile(as.numeric(q), 0.5),
+minq  = quantile(as.numeric(q), 0.025),
+maxq = quantile(as.numeric(q), 0.975),
+.groups = 'drop')
+
+ggplot(m, aes(x = log(smoothingFctr+1)/meanSlObs, y = meanq, size = meanSlObs)) + geom_smooth() + xlab(paste0( "log(", "\U03C1", ")", "/", "\u03B4")) + theme_minimal() + ylab("Median q")
+```
+
+```{r parameterize q}
+library(adehabitatHR) # for fitting kde to compare to our model
+library(data.table) # for fread
+library(terra)
+library(raster)
+library(betareg)
+#t <- m %>% filter(theta != 0) # remove null model
+# parameterize model
+fitn <- nls(meanq ~ a + b*(smoothingFctr) + c*(smoothingFctr)^2 + d*meanSlObs + e*(meanSlObs)^3, m, start = list(a = 0, b =1, c= 1, d = 1, e = 1))
+m$fitted <- fitted(fitn)
+plot(m$fitted, m$meanq)
+abline(0, 1, col = "red")
+# grab coefficients
+coff <- coefficients(fitn)
+k <- 1
+
+basePath <- "./data/output/domain-100-by-100"
+folders <- list.files(path = basePath, recursive = FALSE)
+#folders <- c("0.5-2-2.5", "1-6-2.5", "2-6-2.5")
+folders <- folders[which(grepl("test",folders))]
+folders <- c("2-40-2.5", "2-2-2.5", "1-0-2.5", "0.5-6-2.5")
+#folders <- c("test-3-2", "test-2-8", "test-1-6")
+baTable <- data.frame(matrix(0,0, 7))
+names(baTable) <- c("rho", "theta", "medianbeta", "mediansfsl", "BAq", "BA", "qest")
+for(i in seq_along(folders)){
+  folder <- folders[i]
+  land <- terra::rast(paste0(basePath, "/", folder, "/", "ls.tif"))
+  # load unused movement data
+  ud <- terra::rast(paste0(basePath, "/", folder, "/", "ud.tif")) # load the true UD
+  metaDat <- read.table(paste0(basePath, "/", folder, "/", "metaDat"), sep = ",", header = TRUE)
+  L <- terra::values(land)
+  U <- terra::values(ud)
+  ok <- is.finite(L) & is.finite(U)
+  L <- L[ok]
+  U <- U[ok]
+  mhat <- metaDat
+  for(j in seq_len(nrow(mhat))){
+    theta <- mhat[j, "theta"]
+    beta <- mhat[j,'betaISSF']
+    sl_obs_ <- mhat[j,'sl_obs_']
+    rho <- mhat[j,'smoothingFctr']
+    # fit kde
+    # derive q
+    qest <- as.vector(coff[['a']] + coff[['b']]*rho + coff[['c']]*(rho)^2 + coff[['d']]*sl_obs_ + coff[['e']]*(sl_obs_)^3)
+    qest <- max(0, min(1, qest))
+    a <- beta * L
+    b <- 2 * beta * L
+    K1 <- sum(exp(a))
+    K2 <- sum(exp(b))
+
+    den   <- (1 - qest) * K1 + qest * K2
+    num_i <- (1 - qest) * exp(a) + qest * exp(b)
+    qhat  <- num_i / den                # already sums to 1 over 'ok'
+
+    r_naive <- exp(a); r_naive <- r_naive / sum(r_naive)
+    qhat <- qhat / sum(qhat)
+    p_true  <- U / sum(U)
+    # calculate Bhattacharyya's Affinity
+    BAq <- sum(sqrt(p_true * qhat))
+    BA <- sum(sqrt(p_true *r_naive))
+    baTable[k,"theta"] <- theta
+    baTable[k,"mediansfsl"] <- sl_obs_
+    baTable[k,"rho"] <- rho
+    baTable[k,"BAq"] <- BAq
+    baTable[k,"BA"] <- BA
+    baTable[k,"medianbeta"] <- beta
+    baTable[k,"qest"] <- qest
+    k <- k + 1
+    }
+}
 ```
 

@@ -21,11 +21,11 @@ makeLandscapeMatrix <- function(nrow, ncol, seed){
   set.seed(seed)
   n <- nrow*ncol
   uVals <- runif(n, 0, 1) # uniform distribution
-  normVals <- cast(n, uVals)
+  #normVals <- cast(n, uVals)
   # convert to ncol * nrow matrix
-  land <- matrix(normVals, ncol = ncol, nrow = nrow)
+  return(matrix(uVals, ncol = ncol, nrow = nrow))
   # normalize by the range to keep dist of values the same
-  rangeNormalize(land)
+  #rangeNormalize(land)
 }
 #' initiates a continuous landscape matrix with increasing habitat values
 #' (from left to right) between zero and one
@@ -131,8 +131,8 @@ iterativeSmooth <- function(land, sf, rho, nrow, ncol){
   for(i in seq_len(rho)){
     pad <- createPaddedMatrix(smooth, sf)
     smooth <- smooth_pad_terra(pad,sf,smooth)
-    smooth <- matrix(cast(ncell(smooth), as.vector(smooth)), nrow, ncol)
-    smooth <- rangeNormalize(smooth)
+    #smooth <- rangeNormalize(smooth)
   }
+  smooth <- matrix(cast(ncell(smooth), as.vector(smooth)), nrow, ncol)
   return(smooth)
 }
